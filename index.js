@@ -16,10 +16,28 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
+// Configuración CORS actualizada
+const allowedOrigins = [
+  'http://localhost:3000',
+  'https://cabanafront.vercel.app',
+
+];
+
 // Permite peticiones desde tu frontend (ajusta el origen)
 app.use(cors({
-  origin: 'http://localhost:3000', // URL de tu frontend
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  origin: function (origin, callback) {
+    // Permitir solicitudes sin origen (como apps móviles o Postman)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = `Origen ${origin} no permitido por política CORS`;
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: true // Si usas cookies/tokens de autenticación
 }));
 app.use(express.json());
 
