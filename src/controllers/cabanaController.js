@@ -1,4 +1,5 @@
 import Cabana from '../models/Cabana.js';
+import Reserva from '../models/Reserva.js'; // Asegúrate de importar el modelo de Reserva
 
 // Crear cabaña (Admin)
 export const crearCabana = async (req, res) => {
@@ -147,24 +148,52 @@ export const getServiciosDisponibles = async (req, res) => {
 // Listar cabañas disponibles en un rango de fechas (público)
 export const listarCabanasDisponibles = async (req, res) => {
   try {
-      const { fechaInicio, fechaFin } = req.query;
-      const cabanas = await Cabana.find({
-          $or: [
-              { fechasReservadas: { $eq: [] } },
-              {
-                  fechasReservadas: {
-                      $not: {
-                          $elemMatch: {
-                              fechaInicio: { $lt: new Date(fechaFin) },
-                              fechaFin: { $gt: new Date(fechaInicio) },
-                          },
-                      },
-                  },
-              },
-          ],
+    const { fechaInicio, fechaFin } = req.query;
+
+    // Validar fechas
+    if (!fechaInicio || !fechaFin) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Debe proporcionar fechaInicio y fechaFin' 
       });
-      res.status(200).json(cabanas);
+    }
+
+    const fechaInicioDate = new Date(fechaInicio);
+    const fechaFinDate = new Date(fechaFin);
+
+    if (fechaInicioDate >= fechaFinDate) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'La fecha fin debe ser posterior a la fecha inicio' 
+      });
+    }
+
+    // Corrección: Usar Reserva con mayúscula (el modelo)
+    const reservas = await Reserva.find({
+      $or: [
+        { 
+          fechaInicio: { $lt: fechaFinDate }, 
+          fechaFin: { $gt: fechaInicioDate } 
+        }
+      ],
+      estado: { $ne: 'cancelada' }
+    });
+
+    const cabanasOcupadasIds = reservas.map(r => r.cabana);
+    const cabanasDisponibles = await Cabana.find({
+      _id: { $nin: cabanasOcupadasIds }
+    });
+
+    res.status(200).json({ 
+      success: true,
+      data: cabanasDisponibles 
+    });
   } catch (error) {
-      res.status(400).json({ error: error.message });
+    console.error('Error en listarCabanasDisponibles:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Error al buscar cabañas disponibles',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
