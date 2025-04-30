@@ -1,199 +1,248 @@
 import Cabana from '../models/Cabana.js';
-import Reserva from '../models/Reserva.js'; // Asegúrate de importar el modelo de Reserva
+import Reserva from '../models/Reserva.js';
+import { generateImageUrl, updateImageUrls } from '../utils/imageHelpers.js';
 
 // Crear cabaña (Admin)
 export const crearCabana = async (req, res) => {
     try {
-        const nuevaCabana = new Cabana(req.body);
+        // Generar URLs completas para las imágenes si vienen en el body
+        const cabanaData = req.body;
+        if (cabanaData.imagenes && Array.isArray(cabanaData.imagenes)) {
+            cabanaData.imagenes = cabanaData.imagenes.map(img => 
+                img.startsWith('http') ? img : generateImageUrl(req, img)
+            );
+        }
+
+        const nuevaCabana = new Cabana(cabanaData);
         await nuevaCabana.save();
-        res.status(201).json(nuevaCabana);
+        
+        res.status(201).json({
+            success: true,
+            data: nuevaCabana
+        });
     } catch (error) {
-        res.status(400).json({ error: error.message });
+        res.status(400).json({ 
+            success: false,
+            error: error.message 
+        });
     }
 };
 
 // Actualizar cabaña (Admin)
 export const actualizarCabana = async (req, res) => {
     try {
-        const cabana = await Cabana.findByIdAndUpdate(req.params.id, req.body, { new: true });
-        res.status(200).json(cabana);
+        const cabanaData = req.body;
+        
+        // Actualizar URLs de imágenes si es necesario
+        if (cabanaData.imagenes && Array.isArray(cabanaData.imagenes)) {
+            cabanaData.imagenes = cabanaData.imagenes.map(img => 
+                img.startsWith('http') ? img : generateImageUrl(req, img)
+            );
+        }
+
+        const cabana = await Cabana.findByIdAndUpdate(
+            req.params.id, 
+            cabanaData, 
+            { new: true, runValidators: true }
+        );
+
+        if (!cabana) {
+            return res.status(404).json({
+                success: false,
+                error: 'Cabaña no encontrada'
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            data: cabana
+        });
     } catch (error) {
-        res.status(400).json({ error: error.message });
+        res.status(400).json({ 
+            success: false,
+            error: error.message 
+        });
     }
 };
 
 // Eliminar cabaña (Admin)
 export const eliminarCabana = async (req, res) => {
     try {
-        await Cabana.findByIdAndDelete(req.params.id);
-        res.status(200).json({ message: 'Cabaña eliminada' });
+        const cabana = await Cabana.findByIdAndDelete(req.params.id);
+        
+        if (!cabana) {
+            return res.status(404).json({
+                success: false,
+                error: 'Cabaña no encontrada'
+            });
+        }
+
+        res.status(200).json({ 
+            success: true,
+            message: 'Cabaña eliminada correctamente' 
+        });
     } catch (error) {
-        res.status(400).json({ error: error.message });
+        res.status(400).json({ 
+            success: false,
+            error: error.message 
+        });
     }
 };
 
 // Listar todas las cabañas (Admin y usuarios)
 export const listarCabanas = async (req, res) => {
     try {
-      const limit = parseInt(req.query.limit) || 10;
-      const cabanas = await Cabana.find().limit(limit).lean(); // .lean() para mejor performance
-  
-      // Construye URLs completas para las imágenes
-      const cabanasConImagenes = cabanas.map(cabana => ({
-        ...cabana,
-        imagenes: cabana.imagenes?.map(img => 
-          img.startsWith('http') ? img : `${req.protocol}://${req.get('host')}/uploads/${img}`
-        ) || []
-      }));
-  
-      res.status(200).json(cabanasConImagenes);
+        const limit = parseInt(req.query.limit) || 10;
+        const cabanas = await Cabana.find().limit(limit).lean();
+
+        // Construir URLs completas para las imágenes
+        const cabanasConImagenes = cabanas.map(cabana => ({
+            ...cabana,
+            imagenes: cabana.imagenes?.map(img => 
+                img.startsWith('http') ? img : generateImageUrl(req, img)
+            ) || []
+        }));
+
+        res.status(200).json({
+            success: true,
+            data: cabanasConImagenes
+        });
     } catch (error) {
-      res.status(500).json({ 
-        success: false,
-        error: "Error al obtener cabañas",
-        details: error.message 
-      });
+        res.status(500).json({ 
+            success: false,
+            error: "Error al obtener cabañas",
+            details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
     }
-  };
+};
 
 // Ver detalles de una cabaña (público)
 export const verCabana = async (req, res) => {
-  try {
-      const cabana = await Cabana.findById(req.params.id);
-      if (!cabana) {
-          return res.status(404).json({ error: 'Cabaña no encontrada' });
-      }
-      res.status(200).json(cabana);
-  } catch (error) {
-      res.status(400).json({ error: error.message });
-  }
-};
-
-// En tu controlador de cabañas (Cabana.js)
-// En tu controlador de cabañas (Cabana.js)
-export const getServiciosDisponibles = async (req, res) => {
-  try {
-    // Esto obtiene todos los servicios únicos usados en las cabañas existentes
-    const servicios = await Cabana.aggregate([
-      { $unwind: "$servicios" },
-      { $group: { _id: "$servicios" } },
-      { $sort: { _id: 1 } }
-    ]);
-    
-    // Si no hay cabañas, devuelve servicios por defecto
-    if (servicios.length === 0) {
-      return res.json([
-        'Wifi',
-        'Piscina',
-        'Aire acondicionado',
-        'Cocina',
-        'Estacionamiento',
-        'TV',
-        'Ropa de cama',
-        'Artículos de aseo',
-        'Balcón o terraza',
-        'Calefacción',
-        'Cocina equipada',
-        'Solárium o reposeras',
-        'Ducha',
-        'Secadora',
-        'Cama doble',
-        'Heladera',
-        'Microondas',
-        'Ingreso con llave o tarjeta',
-        'Pava eléctrica',
-        'Televisión',
-        'Sofá',
-        'Toallas',
-        'Vajilla',
-        'Placard o armario',
-        'Seguridad (cámara o vigilancia)',
-        'Wi-Fi',
-        'Ventiladores'
-      ]);
-    }
-    
-    // Combinar servicios existentes con los nuevos (eliminando duplicados)
-    const serviciosUnicos = [...new Set([
-      ...servicios.map(s => s._id),
-      'Ropa de cama',
-      'Artículos de aseo',
-      'Balcón o terraza',
-      'Calefacción',
-      'Cocina equipada',
-      'Solárium o reposeras',
-      'Ducha',
-      'Secadora',
-      'Cama doble',
-      'Heladera',
-      'Microondas',
-      'Ingreso con llave o tarjeta',
-      'Pava eléctrica',
-      'Televisión',
-      'Sofá',
-      'Toallas',
-      'Vajilla',
-      'Placard o armario',
-      'Seguridad (cámara o vigilancia)',
-      'Wi-Fi',
-      'Ventiladores'
-    ])].sort();
-    
-    res.json(serviciosUnicos);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-// Listar cabañas disponibles en un rango de fechas (público)
-export const listarCabanasDisponibles = async (req, res) => {
-  try {
-    const { fechaInicio, fechaFin } = req.query;
-
-    // Validar fechas
-    if (!fechaInicio || !fechaFin) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'Debe proporcionar fechaInicio y fechaFin' 
-      });
-    }
-
-    const fechaInicioDate = new Date(fechaInicio);
-    const fechaFinDate = new Date(fechaFin);
-
-    if (fechaInicioDate >= fechaFinDate) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'La fecha fin debe ser posterior a la fecha inicio' 
-      });
-    }
-
-    // Corrección: Usar Reserva con mayúscula (el modelo)
-    const reservas = await Reserva.find({
-      $or: [
-        { 
-          fechaInicio: { $lt: fechaFinDate }, 
-          fechaFin: { $gt: fechaInicioDate } 
+    try {
+        const cabana = await Cabana.findById(req.params.id).lean();
+        
+        if (!cabana) {
+            return res.status(404).json({
+                success: false,
+                error: 'Cabaña no encontrada'
+            });
         }
-      ],
-      estado: { $ne: 'cancelada' }
-    });
 
-    const cabanasOcupadasIds = reservas.map(r => r.cabana);
-    const cabanasDisponibles = await Cabana.find({
-      _id: { $nin: cabanasOcupadasIds }
-    });
+        // Asegurar URLs HTTPS para las imágenes
+        const cabanaConImagenes = {
+            ...cabana,
+            imagenes: cabana.imagenes?.map(img => 
+                img.startsWith('http') ? img : generateImageUrl(req, img)
+            ) || []
+        };
 
-    res.status(200).json({ 
-      success: true,
-      data: cabanasDisponibles 
-    });
-  } catch (error) {
-    console.error('Error en listarCabanasDisponibles:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Error al buscar cabañas disponibles',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
+        res.status(200).json({
+            success: true,
+            data: cabanaConImagenes
+        });
+    } catch (error) {
+        res.status(400).json({ 
+            success: false,
+            error: error.message 
+        });
+    }
+};
+
+// Obtener servicios disponibles
+export const getServiciosDisponibles = async (req, res) => {
+    try {
+        const servicios = await Cabana.aggregate([
+            { $unwind: "$servicios" },
+            { $group: { _id: "$servicios" } },
+            { $sort: { _id: 1 } }
+        ]);
+        
+        const serviciosDefault = [
+            'Wifi', 'Piscina', 'Aire acondicionado', 'Cocina', 'Estacionamiento',
+            'TV', 'Ropa de cama', 'Artículos de aseo', 'Balcón o terraza',
+            'Calefacción', 'Cocina equipada', 'Solárium o reposeras', 'Ducha',
+            'Secadora', 'Cama doble', 'Heladera', 'Microondas', 'Ingreso con llave o tarjeta',
+            'Pava eléctrica', 'Televisión', 'Sofá', 'Toallas', 'Vajilla',
+            'Placard o armario', 'Seguridad (cámara o vigilancia)', 'Wi-Fi', 'Ventiladores'
+        ];
+
+        const serviciosUnicos = [...new Set([
+            ...servicios.map(s => s._id),
+            ...serviciosDefault
+        ])].sort();
+        
+        res.status(200).json({
+            success: true,
+            data: serviciosUnicos
+        });
+    } catch (error) {
+        res.status(500).json({ 
+            success: false,
+            error: error.message 
+        });
+    }
+};
+
+// Listar cabañas disponibles en un rango de fechas
+export const listarCabanasDisponibles = async (req, res) => {
+    try {
+        const { fechaInicio, fechaFin } = req.query;
+
+        // Validar fechas
+        if (!fechaInicio || !fechaFin) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'Debe proporcionar fechaInicio y fechaFin' 
+            });
+        }
+
+        const fechaInicioDate = new Date(fechaInicio);
+        const fechaFinDate = new Date(fechaFin);
+
+        if (fechaInicioDate >= fechaFinDate) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'La fecha fin debe ser posterior a la fecha inicio' 
+            });
+        }
+
+        // Buscar reservas que se superpongan
+        const reservas = await Reserva.find({
+            $or: [
+                { 
+                    fechaInicio: { $lt: fechaFinDate }, 
+                    fechaFin: { $gt: fechaInicioDate } 
+                }
+            ],
+            estado: { $ne: 'cancelada' }
+        });
+
+        // Obtener IDs de cabañas ocupadas
+        const cabanasOcupadasIds = reservas.map(r => r.cabana);
+
+        // Buscar cabañas disponibles
+        const cabanasDisponibles = await Cabana.find({
+            _id: { $nin: cabanasOcupadasIds }
+        }).lean();
+
+        // Asegurar URLs HTTPS para las imágenes
+        const cabanasConImagenes = cabanasDisponibles.map(cabana => ({
+            ...cabana,
+            imagenes: cabana.imagenes?.map(img => 
+                img.startsWith('http') ? img : generateImageUrl(req, img)
+            ) || []
+        }));
+
+        res.status(200).json({ 
+            success: true,
+            data: cabanasConImagenes
+        });
+    } catch (error) {
+        console.error('Error en listarCabanasDisponibles:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Error al buscar cabañas disponibles',
+            details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
 };
