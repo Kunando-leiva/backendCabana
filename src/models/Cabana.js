@@ -23,7 +23,8 @@ const cabanaSchema = new mongoose.Schema({
         default: []
     },
     imagenes: [String], // URLs de imágenes
-    fechasReservadas: [{
+    fechasReservadas:
+    [{
         fechaInicio: Date,
         fechaFin: Date,
         reservaId: { 

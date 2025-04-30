@@ -31,6 +31,8 @@ export const auth = async (req, res, next) => {
           });
       }
 
+      
+
       // 4. Verificar existencia de usuario en BD
       const user = await User.findById(decoded.id).select('-password');
       if (!user) {
@@ -39,6 +41,7 @@ export const auth = async (req, res, next) => {
               error: 'Usuario no encontrado' 
           });
       }
+      
 
       // 5. Verificar consistencia entre token y BD
       if (user.rol !== decoded.rol) {
