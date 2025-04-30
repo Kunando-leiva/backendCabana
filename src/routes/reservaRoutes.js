@@ -7,7 +7,6 @@ import {
   obtenerReservas,
   crearReservaAdmin,
   obtenerReservaById,
-  buscarCabanasDisponibles
 } from '../controllers/reservaController.js';
 import { auth, isAdmin } from '../middlewares/auth.js';
 import Reserva from '../models/Reserva.js';
@@ -20,7 +19,6 @@ router.post('/admin/crear', auth, isAdmin, crearReservaAdmin);
 router.put('/admin/:id', auth, isAdmin, actualizarReserva);
 router.delete('/admin/eliminar/:id', auth, isAdmin, eliminarReserva);
 router.get('/admin/filtrar', auth, filtrarReservas); // Filtrar reservas por fecha y estado
-router.get('/disponibles', buscarCabanasDisponibles);
 // RUTA PARA USUARIOS - listar sus reservas
 router.get('/mis-reservas', auth, listarMisReservas);
 

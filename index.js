@@ -9,63 +9,73 @@ import uploadRoutes from './src/routes/upload.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+// Configuración de entorno y paths
 dotenv.config();
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Inicializar Express
 const app = express();
 
-// Configuración CORS actualizada
+// Configuración CORS mejorada
 const allowedOrigins = [
   'http://localhost:3000',
   'https://cabanafront.vercel.app',
-
+  'https://www.tudominio.com' // Agrega otros dominios si es necesario
 ];
 
-// Permite peticiones desde tu frontend (ajusta el origen)
-app.use(cors({
+const corsOptions = {
   origin: function (origin, callback) {
     // Permitir solicitudes sin origen (como apps móviles o Postman)
     if (!origin) return callback(null, true);
     
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = `Origen ${origin} no permitido por política CORS`;
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      const msg = `El origen ${origin} no tiene permiso de acceso`;
       return callback(new Error(msg), false);
     }
-    return callback(null, true);
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  credentials: true // Si usas cookies/tokens de autenticación
-}));
-app.use(express.json());
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-token'],
+  credentials: true,
+  optionsSuccessStatus: 200
+};
 
-// Conectar a la base de datos
+// Middlewares
+app.use(cors(corsOptions));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Conexión a la base de datos
 connectDB();
 
-// Ruta de prueba
+// Rutas
 app.get('/', (req, res) => {
-    res.send('API is running...');
+  res.send('API del Complejo de Cabañas');
 });
 
 app.use('/api/cabanas', cabanaRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/reservas', reservaRoutes);
 app.use('/api/upload', uploadRoutes);
+
+// Servir archivos estáticos
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-const PORT = process.env.PORT || 5000;
-
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+// Manejo de errores global
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ 
+    success: false,
+    error: 'Error interno del servidor',
+    details: process.env.NODE_ENV === 'development' ? err.message : undefined
+  });
 });
 
-// vite.config.js
-export default {
-  server: {
-    proxy: {
-      '/api': 'http://localhost:3000/', // Reemplaza con tu API
-    },
-  },
-};
+// Iniciar servidor
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`Servidor ejecutándose en puerto ${PORT}`);
+  console.log(`Modo: ${process.env.NODE_ENV || 'development'}`);
+});
