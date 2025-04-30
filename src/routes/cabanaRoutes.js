@@ -6,6 +6,7 @@ import {
     listarCabanas,
     verCabana,
     listarCabanasDisponibles,
+    buscarCabanasDisponibles
     
 } from '../controllers/cabanaController.js';
 import { auth, isAdmin } from '../middlewares/auth.js'; 
@@ -21,5 +22,6 @@ router.delete('/:id', auth, isAdmin, eliminarCabana);
 router.get('/', listarCabanas);
 router.get('/:id', verCabana); // Ver detalles de una cabaña (público)
 router.get('/disponibles', listarCabanasDisponibles); // Listar cabañas disponibles en un rango de fechas (público)
+router.get('/disponibles', buscarCabanasDisponibles);
 
 export default router;
