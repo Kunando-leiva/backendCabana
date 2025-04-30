@@ -323,3 +323,58 @@ export const obtenerReservaById = async (req, res) => {
 };
 
 
+export const buscarCabanasDisponibles = async (req, res) => {
+  try {
+    const { fechaInicio, fechaFin } = req.query;
+
+    // Validar fechas
+    if (!fechaInicio || !fechaFin) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Debe proporcionar fechaInicio y fechaFin' 
+      });
+    }
+
+    const fechaInicioDate = new Date(fechaInicio);
+    const fechaFinDate = new Date(fechaFin);
+
+    if (fechaInicioDate >= fechaFinDate) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'La fecha fin debe ser posterior a la fecha inicio' 
+      });
+    }
+
+    // Buscar reservas que se superpongan con el rango solicitado
+    const reservas = await Reserva.find({
+      $or: [
+        { 
+          fechaInicio: { $lt: fechaFinDate }, 
+          fechaFin: { $gt: fechaInicioDate } 
+        }
+      ],
+      estado: { $ne: 'cancelada' } // Ignorar reservas canceladas
+    });
+
+    // Obtener IDs de cabañas ocupadas
+    const cabanasOcupadasIds = reservas.map(r => r.cabana);
+
+    // Buscar cabañas que NO están en la lista de ocupadas
+    const cabanasDisponibles = await Cabana.find({
+      _id: { $nin: cabanasOcupadasIds }
+    });
+
+    res.status(200).json({ 
+      success: true,
+      data: cabanasDisponibles 
+    });
+  } catch (error) {
+    console.error('Error en buscarCabanasDisponibles:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Error al buscar cabañas disponibles',
+      details: error.message 
+    });
+  }
+};
+
