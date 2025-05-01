@@ -1,9 +1,18 @@
 import multer from 'multer';
 import path from 'path';
+import fs from 'fs';
+
+// Ruta completa de la carpeta uploads
+const uploadsPath = path.join(process.cwd(), 'uploads');
+
+// Si no existe, la crea
+if (!fs.existsSync(uploadsPath)) {
+  fs.mkdirSync(uploadsPath, { recursive: true });
+}
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, path.join(process.cwd(), 'uploads'));
+    cb(null, uploadsPath);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
