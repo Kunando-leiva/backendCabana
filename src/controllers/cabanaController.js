@@ -118,9 +118,19 @@ export const listarCabanas = async (req, res) => {
 
 // Ver detalles de una cabaña (público)
 export const verCabana = async (req, res) => {
+    // Validar que el ID sea un ObjectId válido
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+        return res.status(400).json({
+            success: false,
+            error: 'ID de cabaña inválido'
+        });
+    }
+
     try {
-        const cabana = await Cabana.findById(req.params.id).lean();
-        
+        const cabana = await Cabana.findById(req.params.id)
+            .select('-fechasReservadas -__v') // Excluir campos innecesarios
+            .lean();
+
         if (!cabana) {
             return res.status(404).json({
                 success: false,
@@ -128,24 +138,64 @@ export const verCabana = async (req, res) => {
             });
         }
 
-        // Asegurar URLs HTTPS para las imágenes
-        const cabanaConImagenes = {
-            ...cabana,
-            imagenes: cabana.imagenes?.map(img => 
-                img.startsWith('http') ? img : generateImageUrl(req, img)
-            ) || []
+        // Validación y transformación de datos
+        const cabanaTransformada = {
+            _id: cabana._id,
+            nombre: cabana.nombre || 'Sin nombre',
+            descripcion: cabana.descripcion || '',
+            precio: Number(cabana.precio) || 0,
+            capacidad: Number(cabana.capacidad) || 1,
+            servicios: Array.isArray(cabana.servicios) ? cabana.servicios : [],
+            imagenes: procesarImagenes(cabana.imagenes, req),
+            createdAt: cabana.createdAt,
+            updatedAt: cabana.updatedAt
         };
 
         res.status(200).json({
             success: true,
-            data: cabanaConImagenes
+            data: cabanaTransformada
         });
+
     } catch (error) {
-        res.status(400).json({ 
+        console.error('Error en verCabana:', error);
+        
+        // Manejar diferentes tipos de errores
+        const statusCode = error.name === 'CastError' ? 400 : 500;
+        const errorMessage = error.name === 'CastError' 
+            ? 'Formato de ID inválido' 
+            : 'Error al obtener la cabaña';
+
+        res.status(statusCode).json({ 
             success: false,
-            error: error.message 
+            error: errorMessage,
+            details: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
+};
+
+// Función auxiliar para procesar imágenes
+const procesarImagenes = (imagenes, req) => {
+    if (!imagenes) return [];
+    
+    // Si es un string individual, convertirlo a array
+    if (typeof imagenes === 'string') {
+        imagenes = [imagenes];
+    }
+
+    // Asegurar que sea un array
+    if (!Array.isArray(imagenes)) return [];
+
+    return imagenes.map(img => {
+        if (typeof img !== 'string') return generateImageUrl(req, 'default.jpg');
+        
+        // Si ya es una URL completa
+        if (img.startsWith('http')) {
+            return img.replace('http://', 'https://');
+        }
+        
+        // Si es solo el nombre del archivo
+        return generateImageUrl(req, img);
+    });
 };
 
 // Obtener servicios disponibles
