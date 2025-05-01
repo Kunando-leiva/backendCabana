@@ -21,7 +21,6 @@ const app = express();
 const allowedOrigins = [
   'http://localhost:3000',
   'https://cabanafront.vercel.app',
-  'https://www.tudominio.com' // Agrega otros dominios si es necesario
 ];
 
 const corsOptions = {
