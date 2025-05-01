@@ -142,7 +142,7 @@ export const verCabana = async (req, res) => {
         const cabanaTransformada = {
             _id: cabana._id,
             nombre: cabana.nombre || 'Sin nombre',
-            descripcion: cabana.descripcion || '',
+            descripcion: cabana.description || cabana.descripcion || '',
             precio: Number(cabana.precio) || 0,
             capacidad: Number(cabana.capacidad) || 1,
             servicios: Array.isArray(cabana.servicios) ? cabana.servicios : [],
