@@ -31,8 +31,17 @@ export const crearCabana = async (req, res) => {
 // Actualizar cabaña (Admin)
 export const actualizarCabana = async (req, res) => {
     try {
+        const { id } = req.params;
         const cabanaData = req.body;
-        
+
+        // Validar ID
+        if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+            return res.status(400).json({
+                success: false,
+                error: 'ID de cabaña no válido'
+            });
+        }
+
         // Actualizar URLs de imágenes si es necesario
         if (cabanaData.imagenes && Array.isArray(cabanaData.imagenes)) {
             cabanaData.imagenes = cabanaData.imagenes.map(img => 
@@ -41,7 +50,7 @@ export const actualizarCabana = async (req, res) => {
         }
 
         const cabana = await Cabana.findByIdAndUpdate(
-            req.params.id, 
+            id, 
             cabanaData, 
             { new: true, runValidators: true }
         );
@@ -188,61 +197,142 @@ export const listarCabanasDisponibles = async (req, res) => {
     try {
         const { fechaInicio, fechaFin } = req.query;
 
-        // Validar fechas
+        // 1. Validación avanzada de fechas
         if (!fechaInicio || !fechaFin) {
             return res.status(400).json({ 
                 success: false,
-                error: 'Debe proporcionar fechaInicio y fechaFin' 
+                code: 'MISSING_DATES',
+                message: 'Debe proporcionar fechaInicio y fechaFin',
+                details: 'Ambos parámetros son requeridos en formato YYYY-MM-DD'
             });
         }
 
         const fechaInicioDate = new Date(fechaInicio);
         const fechaFinDate = new Date(fechaFin);
 
-        if (fechaInicioDate >= fechaFinDate) {
-            return res.status(400).json({ 
+        if (isNaN(fechaInicioDate.getTime())) {
+            return res.status(400).json({
                 success: false,
-                error: 'La fecha fin debe ser posterior a la fecha inicio' 
+                code: 'INVALID_START_DATE',
+                message: 'Fecha inicio no válida',
+                details: 'Formato debe ser YYYY-MM-DD'
+            })
+            ;
+        }
+
+        if (isNaN(fechaFinDate.getTime())) {
+            return res.status(400).json({
+                success: false,
+                code: 'INVALID_END_DATE',
+                message: 'Fecha fin no válida',
+                details: 'Formato debe ser YYYY-MM-DD'
             });
         }
 
-        // Buscar reservas que se superpongan
-        const reservas = await Reserva.find({
-            $or: [
-                { 
-                    fechaInicio: { $lt: fechaFinDate }, 
-                    fechaFin: { $gt: fechaInicioDate } 
+        if (fechaInicioDate >= fechaFinDate) {
+            return res.status(400).json({ 
+                success: false,
+                code: 'INVALID_DATE_RANGE',
+                message: 'La fecha fin debe ser posterior a la fecha inicio',
+                details: `Rango recibido: ${fechaInicio} a ${fechaFin}`
+            });
+        }
+
+        // 2. Optimización: Cache de 5 minutos para consultas frecuentes
+        const cacheKey = `disponibles-${fechaInicio}-${fechaFin}`;
+        const cached = await redisClient?.get(cacheKey);
+        
+        if (cached) {
+            return res.status(200).json(JSON.parse(cached));
+        }
+
+        // 3. Búsqueda eficiente con agregación
+        const cabanasDisponibles = await Reserva.aggregate([
+            // Paso 1: Encontrar reservas que se superponen
+            {
+                $match: {
+                    $and: [
+                        { fechaInicio: { $lt: fechaFinDate } },
+                        { fechaFin: { $gt: fechaInicioDate } },
+                        { estado: { $ne: 'cancelada' } }
+                    ]
                 }
-            ],
-            estado: { $ne: 'cancelada' }
-        });
+            },
+            // Paso 2: Agrupar por cabaña
+            {
+                $group: {
+                    _id: "$cabana",
+                    count: { $sum: 1 }
+                }
+            },
+            // Paso 3: Buscar cabañas no reservadas
+            {
+                $lookup: {
+                    from: "cabanas",
+                    localField: "_id",
+                    foreignField: "_id",
+                    as: "cabanaInfo"
+                }
+            },
+            // Paso 4: Proyectar solo las disponibles
+            {
+                $project: {
+                    _id: 0,
+                    cabanaId: "$_id",
+                    reservas: "$count",
+                    cabana: { $arrayElemAt: ["$cabanaInfo", 0] }
+                }
+            }
+        ]);
 
-        // Obtener IDs de cabañas ocupadas
-        const cabanasOcupadasIds = reservas.map(r => r.cabana);
-
-        // Buscar cabañas disponibles
-        const cabanasDisponibles = await Cabana.find({
-            _id: { $nin: cabanasOcupadasIds }
-        }).lean();
-
-        // Asegurar URLs HTTPS para las imágenes
-        const cabanasConImagenes = cabanasDisponibles.map(cabana => ({
-            ...cabana,
-            imagenes: cabana.imagenes?.map(img => 
-                img.startsWith('http') ? img : generateImageUrl(req, img)
-            ) || []
+        // 4. Procesamiento de imágenes seguro
+        const baseUrl = `${req.protocol}://${req.get('host')}/uploads/`;
+        const resultados = cabanasDisponibles.map(item => ({
+            ...item.cabana,
+            imagenes: item.cabana.imagenes?.map(img => 
+                img.startsWith('http') ? img : `${baseUrl}${img}`
+            ) || [],
+            _disponibilidad: {
+                reservasEnPeriodo: item.reservas
+            }
         }));
 
-        res.status(200).json({ 
+        // 5. Cachear resultados
+        if (redisClient) {
+            await redisClient.setEx(
+                cacheKey,
+                300, // 5 minutos de cache
+                JSON.stringify({ success: true, data: resultados })
+            );
+        }
+
+        return res.status(200).json({ 
             success: true,
-            data: cabanasConImagenes
+            data: resultados,
+            metadata: {
+                total: resultados.length,
+                fechaInicio,
+                fechaFin,
+                consultadoEn: new Date().toISOString()
+            }
         });
+
     } catch (error) {
-        console.error('Error en listarCabanasDisponibles:', error);
-        res.status(500).json({ 
+        console.error('[ERROR] listarCabanasDisponibles:', {
+            message: error.message,
+            stack: error.stack,
+            params: req.query
+        });
+
+        return res.status(500).json({ 
             success: false,
-            error: 'Error al buscar cabañas disponibles',
-            details: process.env.NODE_ENV === 'development' ? error.message : undefined
+            code: 'SERVER_ERROR',
+            message: 'Error al procesar la solicitud',
+            details: process.env.NODE_ENV === 'development' ? {
+                error: error.message,
+                stack: error.stack
+            } : undefined
         });
     }
 };
+
