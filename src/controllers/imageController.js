@@ -2,6 +2,7 @@ import Image from '../models/Image.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { API_URL } from '../../config/config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,7 +41,7 @@ export const getImage = async (req, res) => {
       success: true,
       image: {
         ...image.toObject(),
-        url: `${process.env.API_URL}${image.path}`
+        url: `${API_URL}${image.path}`
       }
     });
   } catch (error) {
@@ -58,10 +59,10 @@ export const getGallery = async (req, res) => {
       success: true,
       images: images.map(img => ({
         id: img._id,
-        url: `${process.env.API_URL}${img.path}`,
+        url: `${API_URL}${img.path}`,
         cabana: img.relatedCabana,
         uploadedBy: img.uploadedBy,
-        metadata: img.metadata
+        metadata: img.metadata 
       }))
     });
   } catch (error) {
