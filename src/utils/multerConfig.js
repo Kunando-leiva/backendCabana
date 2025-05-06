@@ -1,14 +1,13 @@
 import multer from 'multer';
-import { join, dirname } from 'path';
+import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 
-// Solución para __dirname en ES Modules
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const __dirname = path.dirname(__filename);
 
 // Configuración del directorio de uploads
-const uploadDir = join(__dirname, '../../uploads');
+const uploadDir = path.join(__dirname, '../../uploads');
 
 // Crear directorio si no existe
 if (!fs.existsSync(uploadDir)) {
@@ -16,30 +15,60 @@ if (!fs.existsSync(uploadDir)) {
 }
 
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
+  destination: (req, file, cb) => {
     cb(null, uploadDir);
   },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + file.originalname);
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname);
+    cb(null, uniqueSuffix + ext);
   }
 });
 
 const fileFilter = (req, file, cb) => {
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
-  if (allowedTypes.includes(file.mimetype)) {
+  const allowedTypes = /jpeg|jpg|png|webp/;
+  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+  const mimetype = allowedTypes.test(file.mimetype);
+
+  if (extname && mimetype) {
     cb(null, true);
   } else {
-    cb(new Error('Solo se permiten imágenes (JPEG, PNG, GIF)'), false);
+    cb(new Error('Solo se permiten imágenes (JPEG, JPG, PNG, WEBP)'), false);
   }
 };
 
-const upload = multer({
+export const upload = multer({
   storage,
+  fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB
-  },
-  fileFilter
+    fileSize: 10 * 1024 * 1024 // 10MB
+  }
 });
 
-export default upload;
+export const checkUploadsDir = (req, res, next) => {
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+  next();
+};
+
+// Añadir al final, después de la configuración existente:
+export const handleImageUpload = async (req, res, next) => {
+  try {
+    if (!req.file) throw new Error('No se subió ningún archivo');
+    
+    const imageData = {
+      filename: req.file.filename,
+      path: `/uploads/${req.file.filename}`,
+      originalName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      size: req.file.size,
+      uploadedBy: req.user?._id // Asume autenticación
+    };
+
+    req.imageData = imageData; // Pasa los datos al siguiente middleware
+    next();
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+};

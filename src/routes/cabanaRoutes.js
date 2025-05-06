@@ -6,15 +6,53 @@ import {
     listarCabanas,
     verCabana,
     listarCabanasDisponibles,
+    // uploadImages,
+    // deleteImage
   
     
 } from '../controllers/cabanaController.js';
 import { auth, isAdmin } from '../middlewares/auth.js'; 
+import { upload, checkUploadsDir } from '../utils/multerConfig.js'; // Asegúrate de que esta ruta sea correcta
 
 const router = express.Router();
 
 // Rutas protegidas para admin
-router.post('/', auth, isAdmin, crearCabana);
+router.post('/',
+    auth,
+    isAdmin,
+    upload.array('images', 5), // Permite hasta 5 imágenes
+    async (req, res, next) => {
+        try {
+            // Procesar imágenes subidas
+            if (req.files && req.files.length > 0) {
+                const uploadedImages = await Promise.all(
+                    req.files.map(async (file) => {
+                        const image = new Image({
+                            filename: file.filename,
+                            path: `/uploads/${file.filename}`,
+                            originalName: file.originalname,
+                            mimeType: file.mimetype,
+                            size: file.size,
+                            uploadedBy: req.user._id
+                        });
+                        await image.save();
+                        return image._id;
+                    })
+                );
+                
+                req.body.imageIds = [
+                    ...(req.body.imageIds || []),
+                    ...uploadedImages
+                ];
+            }
+            next();
+        } catch (error) {
+            next(error);
+        }
+    },
+    crearCabana
+);
+
 router.put('/:id', auth, isAdmin, actualizarCabana);
 router.delete('/:id', auth, isAdmin, eliminarCabana);
 
@@ -24,4 +62,6 @@ router.get('/disponibles', listarCabanasDisponibles); // Listar cabañas disponi
 router.get('/:id', verCabana); // Ver detalles de una cabaña (público)
 
 
+// router.post('/:id/imagenes',checkUploadsDir,upload.array('imagenes', 10), uploadImages);   // Máx. 10 imágenesuploadImages);
+// router.delete('/:id/imagenes/:imageId', deleteImage);
 export default router;

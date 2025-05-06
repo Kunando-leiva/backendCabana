@@ -35,6 +35,7 @@ export const auth = async (req, res, next) => {
 
       // 4. Verificar existencia de usuario en BD
       const user = await User.findById(decoded.id).select('-password');
+      req.user = user;
       if (!user) {
           return res.status(401).json({ 
               success: false,
@@ -54,6 +55,7 @@ export const auth = async (req, res, next) => {
 
       // 6. Adjuntar información de usuario a la solicitud
       req.user = {
+        _id: user._id,
           id: user._id,
           rol: user.rol, // Usamos el rol de la BD por seguridad
           email: user.email,
