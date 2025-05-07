@@ -4,7 +4,6 @@ import mongoose from 'mongoose';
 import Image from '../models/Image.js';
 import { API_URL } from '../../config/config.js';
 
-
 // Crear cabaña (Admin)
 export const crearCabana = async (req, res) => {
     try {
@@ -207,22 +206,20 @@ export const eliminarCabana = async (req, res) => {
 };
 
 // Listar todas las cabañas (Admin y usuarios)
-// En tu controlador de cabañas (api/controllers/cabanaController.js)
 export const listarCabanas = async (req, res) => {
     try {
+        const limit = parseInt(req.query.limit) || 10;
         const cabanas = await Cabana.find()
-            .populate({
-                path: 'images',
-                select: 'path originalName' // Solo los campos necesarios
-            })
+            .limit(limit)
+            .populate('images', 'path originalName mimeType size')
             .lean();
 
-        // Transformar las imágenes para incluir URLs completas
+        // Construir URLs completas para las imágenes
         const cabanasConImagenes = cabanas.map(cabana => ({
             ...cabana,
             images: cabana.images?.map(img => ({
                 ...img,
-                url: `${API_URL}${img.path}`
+                url: img.path.startsWith('http') ? img.path : `${API_URL}${img.path}`
             })) || []
         }));
 
@@ -231,9 +228,10 @@ export const listarCabanas = async (req, res) => {
             data: cabanasConImagenes
         });
     } catch (error) {
-        res.status(500).json({
+        res.status(500).json({ 
             success: false,
-            error: "Error al obtener cabañas"
+            error: "Error al obtener cabañas",
+            details: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
 };

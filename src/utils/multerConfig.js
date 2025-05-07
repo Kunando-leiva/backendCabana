@@ -1,29 +1,10 @@
 import multer from 'multer';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { gridFSBucket } from '../../config/gridfs-config.js'; // Archivo que creamos antes
 import fs from 'fs';
+import path from 'path';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Configuración del directorio de uploads
-const uploadDir = path.join(__dirname, '../../uploads');
-
-// Crear directorio si no existe
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = path.extname(file.originalname);
-    cb(null, uniqueSuffix + ext);
-  }
-});
+// Elimina la configuración de disco (storage) y reemplázala con esto:
+const storage = multer.memoryStorage(); // Almacena en memoria antes de subir a GridFS
 
 const fileFilter = (req, file, cb) => {
   const allowedTypes = /jpeg|jpg|png|webp/;
@@ -38,36 +19,40 @@ const fileFilter = (req, file, cb) => {
 };
 
 export const upload = multer({
-  storage,
+  storage, // Ahora es memoryStorage
   fileFilter,
   limits: {
     fileSize: 10 * 1024 * 1024 // 10MB
   }
 });
 
-export const checkUploadsDir = (req, res, next) => {
-  if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-  }
-  next();
-};
+// Elimina checkUploadsDir (no es necesario con GridFS)
 
-// Añadir al final, después de la configuración existente:
+// Adapta handleImageUpload para GridFS:
 export const handleImageUpload = async (req, res, next) => {
   try {
     if (!req.file) throw new Error('No se subió ningún archivo');
     
-    const imageData = {
-      filename: req.file.filename,
-      path: `/uploads/${req.file.filename}`,
-      originalName: req.file.originalname,
-      mimeType: req.file.mimetype,
-      size: req.file.size,
-      uploadedBy: req.user?._id // Asume autenticación
-    };
+    const uploadStream = gridFSBucket.openUploadStream(req.file.originalname, {
+      metadata: {
+        originalName: req.file.originalname,
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+        uploadedBy: req.user?._id
+      }
+    });
 
-    req.imageData = imageData; // Pasa los datos al siguiente middleware
-    next();
+    uploadStream.end(req.file.buffer);
+
+    uploadStream.on('finish', () => {
+      req.imageData = {
+        fileId: uploadStream.id,
+        filename: req.file.originalname,
+        url: `/api/images/${req.file.originalname}` // Ruta para descargar
+      };
+      next();
+    });
+
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }

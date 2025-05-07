@@ -52,11 +52,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 connectDB();
 
 // Crear directorio de uploads si no existe
-const uploadDir = path.join(__dirname, 'persistent-uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-  console.log(`Directorio de uploads creado en: ${uploadDir}`);
-}
+const uploadDir = path.join(__dirname, 'uploads'); // Nombre consistente
+app.use('/uploads', express.static(uploadDir)); // Mismo directorio
 
 // Rutas
 app.get('/', (req, res) => {

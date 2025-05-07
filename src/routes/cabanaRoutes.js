@@ -6,13 +6,12 @@ import {
     listarCabanas,
     verCabana,
     listarCabanasDisponibles,
-    // uploadImages,
-    // deleteImage
+  
   
     
 } from '../controllers/cabanaController.js';
 import { auth, isAdmin } from '../middlewares/auth.js'; 
-import { upload, checkUploadsDir } from '../utils/multerConfig.js'; // Asegúrate de que esta ruta sea correcta
+import { upload, } from '../utils/multerConfig.js'; // Asegúrate de que esta ruta sea correcta
 
 const router = express.Router();
 
@@ -61,7 +60,4 @@ router.get('/', listarCabanas);
 router.get('/disponibles', listarCabanasDisponibles); // Listar cabañas disponibles en un rango de fechas (público)
 router.get('/:id', verCabana); // Ver detalles de una cabaña (público)
 
-
-// router.post('/:id/imagenes',checkUploadsDir,upload.array('imagenes', 10), uploadImages);   // Máx. 10 imágenesuploadImages);
-// router.delete('/:id/imagenes/:imageId', deleteImage);
 export default router;
