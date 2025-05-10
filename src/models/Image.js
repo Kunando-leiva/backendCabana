@@ -9,7 +9,9 @@ const ImageSchema = new mongoose.Schema({
   relatedCabana: { type: mongoose.Schema.Types.ObjectId, ref: 'Cabana' },
   isPublic: { type: Boolean, default: true },
   metadata: Object,
-  createdAt: { type: Date, default: Date.now }
+  createdAt: { type: Date, default: Date.now },
+  fileId: { type: mongoose.Schema.Types.ObjectId, required: true }, // <- Nuevo campo
+  url: { type: String, required: true }
 });
 
 // Añade indexación para búsquedas rápidas

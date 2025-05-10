@@ -52,8 +52,11 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 connectDB();
 
 // Crear directorio de uploads si no existe
-const uploadDir = path.join(__dirname, 'uploads'); // Nombre consistente
-app.use('/uploads', express.static(uploadDir)); // Mismo directorio
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+app.use('/uploads', express.static(uploadDir)); // Sirve los archivos estáticos
 
 // Rutas
 app.get('/', (req, res) => {
@@ -65,13 +68,12 @@ app.use('/api/auth', authRoutes);
 app.use('/api/reservas', reservaRoutes);
 app.use('/api/images', imageRoutes); // Reemplaza uploadRoutes por imageRoutes
 
-
 // Configuración para servir archivos estáticos
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Middleware para verificar acceso a archivos
 app.use('/uploads', (req, res, next) => {
-  // Puedes añadir lógica de autenticación aquí si necesitas proteger las imágenes
+  // Añadir lógica de autenticación si es necesario
   next();
 });
 
@@ -87,8 +89,7 @@ app.use((err, req, res, next) => {
 
 // Redirección HTTPS en producción
 app.use((req, res, next) => {
-  if (process.env.NODE_ENV === 'production' && 
-      req.headers['x-forwarded-proto'] !== 'https') {
+  if (process.env.NODE_ENV === 'production' && req.headers['x-forwarded-proto'] !== 'https') {
     return res.redirect(`https://${req.headers.host}${req.url}`);
   }
   next();

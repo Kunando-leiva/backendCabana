@@ -1,48 +1,49 @@
-import Image from '../models/Image.js';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { API_URL } from '../../config/config.js';
+import mongoose from 'mongoose';
 import { gridFSBucket } from '../../config/gridfs-config.js';
+import Image from '../models/Image.js';
+import { API_URL } from '../../config/config.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
-
+// En tu imageController.js
 export const uploadImage = async (req, res) => {
   try {
     if (!req.file) throw new Error('No file uploaded');
 
-    // 1. Subir a GridFS
+    // Verificar si ya existe una imagen con el mismo nombre
+    const existingImage = await Image.findOne({ filename: req.file.originalname });
+    
+    if (existingImage) {
+      return res.status(409).json({ 
+        success: false,
+        error: `Ya existe una imagen con el nombre "${req.file.originalname}"`,
+        duplicate: true
+      });
+    }
+
+    // Resto de la lógica de subida...
     const uploadStream = gridFSBucket.openUploadStream(req.file.originalname, {
       metadata: {
         uploadedBy: req.user._id,
-        originalName: req.file.originalname,
-        mimeType: req.file.mimetype
+        mimeType: req.file.mimetype,
+        originalName: req.file.originalname
       }
     });
 
-    uploadStream.end(req.file.buffer);
-
-    uploadStream.on('finish', async () => {
-      // 2. Guardar metadatos en MongoDB CON fileId
-      const image = await Image.create({
-        filename: req.file.originalname,
-        fileId: uploadStream.id, // <- Esto faltaba
-        path: `/api/images/${uploadStream.id}`, // Usar ID en lugar de undefined
-        mimeType: req.file.mimetype,
-        size: req.file.size,
-        uploadedBy: req.user._id
-      });
-
-      res.status(201).json({
-        success: true,
-        image: {
-          ...image.toObject(),
-          url: `/api/images/${image.fileId}` // Nueva URL con fileId
-        }
-      });
+    const fileId = await new Promise((resolve, reject) => {
+      uploadStream.end(req.file.buffer, () => resolve(uploadStream.id));
+      uploadStream.on('error', reject);
     });
+
+    const image = await Image.create({
+      filename: req.file.originalname,
+      fileId: fileId,
+      url: `${API_URL}/api/images/${fileId}`,
+      mimeType: req.file.mimetype,
+      size: req.file.size,
+      uploadedBy: req.user._id
+    });
+
+    res.status(201).json({ success: true, image });
 
   } catch (error) {
     res.status(500).json({ 
@@ -54,80 +55,109 @@ export const uploadImage = async (req, res) => {
 
 export const getImage = async (req, res) => {
   try {
-    // Convertir el ID a ObjectId
-    const { id } = req.params;
-    const objectId = new mongoose.Types.ObjectId(id);
-
-    // Verificar existencia en la colección de metadatos
-    const file = await mongoose.connection.db.collection('images.files')
-      .findOne({ _id: objectId });
-
-    if (!file) {
+    const objectId = new mongoose.Types.ObjectId(req.params.id);
+    
+    // Primero verificar metadatos
+    const imageMeta = await Image.findOne({ fileId: objectId });
+    if (!imageMeta) {
       return res.status(404).json({ error: 'Imagen no encontrada' });
     }
 
-    // Stream desde GridFS
-    const downloadStream = gridFSBucket.openDownloadStream(objectId);
-    
-    // Configurar headers
+    // Verificar si la imagen es pública o el usuario tiene acceso
+    if (!imageMeta.isPublic && (!req.user || !req.user._id.equals(imageMeta.uploadedBy))) {
+      return res.status(403).json({ error: 'Acceso no autorizado' });
+    }
+
+    // Obtener el archivo de GridFS
+    const file = await mongoose.connection.db.collection('images.files')
+      .findOne({ _id: objectId });
+
+    if (!file) return res.status(404).json({ error: 'Archivo de imagen no encontrado' });
+
+    // Configurar headers y enviar la imagen
     res.set({
       'Content-Type': file.metadata?.mimeType || 'image/jpeg',
+      'Content-Disposition': `inline; filename="${file.filename}"`,
       'Cache-Control': 'public, max-age=31536000'
     });
 
-    downloadStream.pipe(res);
+    gridFSBucket.openDownloadStream(objectId).pipe(res);
 
   } catch (error) {
-    res.status(500).json({ error: 'Error al recuperar imagen' });
+    res.status(500).json({ 
+      error: 'Error del servidor',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
 
+// Modifica getGallery así:
+// Modifica getGallery así:
 export const getGallery = async (req, res) => {
   try {
-    const images = await Image.find({ isPublic: true })
+    // Traer todas las imágenes, sin importar si son públicas o privadas
+    const images = await Image.find()
       .populate('uploadedBy', 'name email')
-      .lean(); // Más eficiente
+      .sort({ createdAt: -1 })
+      .lean();
 
     res.json({
       success: true,
       images: images.map(img => ({
-        ...img,
-        url: `/api/images/${img.fileId}`,
-        uploadedBy: img.uploadedBy
+        id: img._id,
+        filename: img.filename,
+        url: img.url,
+        isPublic: img.isPublic,
+        uploadedBy: img.uploadedBy,
+        createdAt: img.createdAt,
+        size: img.size
       }))
     });
 
   } catch (error) {
-    res.status(500).json({ error: 'Error al cargar galería' });
+    res.status(500).json({ 
+      success: false,
+      error: 'Error al obtener la galería',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
 
-// Función para eliminar imagen (añade esta nueva función)
+
 export const deleteImage = async (req, res) => {
   try {
-    const { id } = req.params;
-    const objectId = new mongoose.Types.ObjectId(id);
+    const objectId = new mongoose.Types.ObjectId(req.params.id);
 
-    // 1. Eliminar de GridFS
-    await gridFSBucket.delete(objectId);
+    // Verificar existencia primero
+    const imageExists = await Image.findOne({ fileId: objectId });
+    if (!imageExists) {
+      return res.status(404).json({ success: false, error: 'Imagen no encontrada' });
+    }
 
-    // 2. Eliminar metadatos
-    await Image.findOneAndDelete({ fileId: objectId });
+    // Verificar permisos (solo admin o el propietario puede borrar)
+    if (!req.user._id.equals(imageExists.uploadedBy) && !req.user.isAdmin) {
+      return res.status(403).json({ success: false, error: 'No autorizado' });
+    }
 
-    // 3. Limpiar referencias (opcional)
-    await mongoose.model('Cabana').updateMany(
-      { images: objectId },
-      { $pull: { images: objectId } }
-    );
+    // Eliminar en paralelo
+    await Promise.all([
+      gridFSBucket.delete(objectId),
+      Image.deleteOne({ fileId: objectId }),
+      mongoose.model('Cabana').updateMany(
+        { images: objectId },
+        { $pull: { images: objectId } }
+      )
+    ]);
 
-    res.json({ success: true });
-
+    res.json({ 
+      success: true,
+      message: 'Imagen eliminada correctamente'
+    });
   } catch (error) {
     res.status(500).json({ 
       success: false,
-      error: process.env.NODE_ENV === 'development' 
-        ? error.message 
-        : 'Error al eliminar'
+      error: 'Error al eliminar la imagen',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };

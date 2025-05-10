@@ -35,8 +35,13 @@ const cabanaSchema = new mongoose.Schema({
             ref: 'Reserva' 
         },
     }]
-}, {
+}, 
+{
     timestamps: true // Corrige de timestamp a timestamps
+});
+
+cabanaSchema.virtual('imagenPrincipal').get(function() {
+    return this.images.length > 0 ? this.images[0] : null;
 });
 
 export default mongoose.model('Cabana', cabanaSchema);

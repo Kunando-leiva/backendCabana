@@ -1,3 +1,4 @@
+
 export const generateImageUrl = (req, filename) => {
   const protocol = process.env.NODE_ENV === 'production' ? 'https' : req.protocol;
   return `${protocol}://${req.get('host')}/uploads/${filename}`;
