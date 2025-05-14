@@ -1,109 +1,88 @@
 import multer from 'multer';
-import { gridFSBucket } from '../../config/gridfs-config.js';
-import path from 'path';
-import Image from '../models/Image.js';
-import { API_URL } from '../../config/config.js';
+import { GridFSBucket } from 'mongodb';
+import mongoose from 'mongoose';
 
-// Configuración de Multer para almacenamiento en memoria
+// Configuración mejorada de Multer
 const storage = multer.memoryStorage();
 
-// Filtro de tipos de archivo permitidos
 const fileFilter = (req, file, cb) => {
   const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
-  const maxSize = 10 * 1024 * 1024; // 10MB
-
+  const allowedExtensions = ['.jpeg', '.jpg', '.png', '.webp'];
+  
   // Validar tipo MIME
   if (!allowedTypes.includes(file.mimetype)) {
-    return cb(new Error('Solo se permiten imágenes (JPEG, JPG, PNG, WEBP)'), false);
+    return cb(new Error('Solo imágenes (JPEG, PNG, WEBP)'), false);
   }
-
-  // Validar extensión del archivo
-  const extname = path.extname(file.originalname).toLowerCase();
-  if (!['.jpeg', '.jpg', '.png', '.webp'].includes(extname)) {
-    return cb(new Error('Extensión de archivo no permitida'), false);
+  
+  // Validar extensión
+  const ext = file.originalname.toLowerCase().slice(-5);
+  if (!allowedExtensions.some(e => ext.endsWith(e))) {
+    return cb(new Error('Extensión no permitida'), false);
   }
-
-  // Validar tamaño del archivo
-  if (file.size > maxSize) {
-    return cb(new Error('El tamaño máximo permitido es 10MB'), false);
-  }
-
+  
   cb(null, true);
 };
 
-// Configuración de Multer
+// Exporta Multer configurado
 export const upload = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB
+    fileSize: 10 * 1024 * 1024, // 10MB
+    files: 5 // Máximo 5 archivos
   }
 });
 
-// Middleware para manejar la subida de imágenes a GridFS
-// En utils/multerConfig.js
-export const handleImageUpload = async (req, res, next) => {
+// Middleware mejorado para GridFS
+export const handleGridFSUpload = async (req, res, next) => {
+  if (!req.file) {
+    console.log('Debug - Archivo recibido en GridFS:', req.file);
+    return res.status(400).json({ 
+      success: false, 
+      error: 'No se recibió archivo para GridFS' 
+    });
+  }
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
-    if (!req.file && !req.files) return next();
+    const bucket = new GridFSBucket(mongoose.connection.db, {
+      bucketName: 'images',
+      chunkSizeBytes: 255 * 1024 // 255KB
+    });
 
-    const files = req.file ? [req.file] : req.files;
-    req.uploadedImages = [];
+    const uploadStream = bucket.openUploadStream(req.file.originalname, {
+      metadata: {
+        uploadedBy: req.user._id,
+        mimeType: req.file.mimetype,
+        size: req.file.size
+        
+      }
+    });
 
-    for (const file of files) {
-      const uploadStream = gridFSBucket.openUploadStream(file.originalname, {
-        metadata: {
-          originalName: file.originalname,
-          mimeType: file.mimetype,
-          size: file.size,
-          uploadedBy: req.user?._id
+    req.file.id = await new Promise((resolve, reject) => {
+      uploadStream.end(req.file.buffer, (err) => {
+        if (err) {
+          session.abortTransaction();
+          reject(err);
+        } else {
+          resolve(uploadStream.id);
         }
       });
+    });
 
-      const fileId = await new Promise((resolve, reject) => {
-        uploadStream.end(file.buffer, (error) => {
-          if (error) return reject(error);
-          resolve(uploadStream.id);
-        });
-      });
-
-      // Crear registro en la colección Image
-      const image = await Image.create({
-        filename: file.originalname,
-        fileId,
-        url: `${API_URL}/api/images/${fileId}`,
-        mimeType: file.mimetype,
-        size: file.size,
-        uploadedBy: req.user?._id
-      });
-
-      req.uploadedImages.push({
-        fileId,
-        filename: file.originalname,
-        url: image.url
-      });
-    }
-
+    await session.commitTransaction();
     next();
   } catch (error) {
-    // Limpiar imágenes subidas si hay error
-    if (req.uploadedImages?.length > 0) {
-      await Promise.all(
-        req.uploadedImages.map(img => 
-          gridFSBucket.delete(img.fileId).catch(console.error)
-       ) );
-    }
-    res.status(400).json({ success: false, error: error.message });
+    await session.abortTransaction();
+    console.error('Error en GridFS:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Error al subir a GridFS',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  } finally {
+    session.endSession();
   }
-};
-
-// Middleware para eliminar imágenes en caso de fallo posterior
-export const cleanupImagesOnError = async (err, req, res, next) => {
-  if (req.uploadedImages) {
-    await Promise.all(
-      req.uploadedImages.map(img => 
-        gridFSBucket.delete(img.fileId).catch(console.error)
-      )
-    );
-  }
-  next(err);
 };

@@ -9,6 +9,8 @@ import imageRoutes from './src/routes/imageRoutes.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import cron from 'node-cron';
+
 
 // Configuración de entorno y paths
 dotenv.config();
@@ -22,34 +24,86 @@ const app = express();
 const allowedOrigins = [
   'http://localhost:3000',
   'https://cabanafront.vercel.app',
-  'https://backendcabana.onrender.com' // Añade tu dominio de backend
+  'https://backendcabana.onrender.com'
 ];
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // Permitir solicitudes sin origen (como apps móviles o Postman)
     if (!origin) return callback(null, true);
-    
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
-    } else {
-      const msg = `El origen ${origin} no tiene permiso de acceso`;
-      return callback(new Error(msg), false);
     }
+    return callback(new Error(`Origen ${origin} no permitido`), false);
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-token'],
   credentials: true,
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 204
 };
+
 
 // Middlewares
 app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // Habilitar preflight para todas las rutas
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Conexión a la base de datos
-connectDB();
+connectDB(); 
+
+const setupImageBackups = () => {
+  const backupDir = path.join(__dirname, 'backups');
+  if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+
+  // Programar backup diario a las 3 AM
+  cron.schedule('0 3 * * *', async () => { 
+    console.log('⏰ Iniciando backup automático de imágenes...');
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupFile = path.join(backupDir, `images-backup-${timestamp}.json`);
+
+    const session = await mongoose.startSession();
+    try {
+      const [files, chunks] = await Promise.all([
+        mongoose.connection.db.collection('images.files').find({}).toArray(),
+        mongoose.connection.db.collection('images.chunks').find({}).toArray()
+      ]);
+
+      fs.writeFileSync(backupFile, JSON.stringify({ files, chunks }, null, 2));
+      console.log(`✅ Backup guardado: ${backupFile.replace(__dirname, '')}`);
+
+      // Limpiar backups antiguos (>7 días)
+      fs.readdirSync(backupDir).forEach(file => {
+        const filePath = path.join(backupDir, file);
+        const stat = fs.statSync(filePath);
+        if (stat.mtime < Date.now() - 7 * 24 * 60 * 60 * 1000) {
+          fs.unlinkSync(filePath);
+          console.log(`🗑️ Eliminado backup antiguo: ${file}`);
+        }
+      });
+    } catch (error) {
+      console.error('❌ Error en backup:', error.message);
+    } finally {
+      session.endSession();
+    }
+  });
+};
+
+// Iniciar el servicio de backups
+if (process.env.NODE_ENV === 'production') {
+  setupImageBackups();
+}
+
+// =============================================
+// 2. RUTA MANUAL PARA BACKUP (OPCIONAL)
+// =============================================
+app.get('/api/admin/backup-images', (req, res) => {
+  if (req.user?.rol !== 'admin') {
+    return res.status(403).json({ error: 'Acceso denegado' });
+  }
+  
+  setupImageBackups(); // Ejecuta inmediatamente
+  res.json({ message: 'Backup iniciado manualmente' });
+});
 
 // Crear directorio de uploads si no existe
 const uploadDir = path.join(__dirname, 'uploads');
@@ -57,6 +111,7 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 app.use('/uploads', express.static(uploadDir)); // Sirve los archivos estáticos
+app.use('/default-cabana.jpg', express.static(path.join(__dirname, 'public/default-cabana.jpg')));
 
 // Rutas
 app.get('/', (req, res) => {
@@ -67,6 +122,7 @@ app.use('/api/cabanas', cabanaRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/reservas', reservaRoutes);
 app.use('/api/images', imageRoutes); // Reemplaza uploadRoutes por imageRoutes
+app.use('/api/', imageRoutes); // Reemplaza uploadRoutes por imageRoutes
 
 // Configuración para servir archivos estáticos
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));

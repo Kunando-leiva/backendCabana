@@ -1,12 +1,6 @@
 import express from 'express';
-import { 
-  listarMisReservas, 
-  eliminarReserva,
-  actualizarReserva,
-  filtrarReservas,
-  obtenerReservas,
-  crearReservaAdmin,
-  obtenerReservaById,
+import { listarMisReservas,  eliminarReserva, actualizarReserva, filtrarReservas, obtenerReservas, crearReservaAdmin,
+ obtenerReservaById,
 } from '../controllers/reservaController.js';
 import { auth, isAdmin } from '../middlewares/auth.js';
 import Reserva from '../models/Reserva.js';

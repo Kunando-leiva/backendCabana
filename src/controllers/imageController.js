@@ -1,54 +1,52 @@
 import mongoose from 'mongoose';
 import { gridFSBucket } from '../../config/gridfs-config.js';
 import Image from '../models/Image.js';
-import { API_URL } from '../../config/config.js';
+import { API_URL } from '../../config/config.js'
+import  Cabana  from '../models/Cabana.js';
 
-
-// En tu imageController.js
 export const uploadImage = async (req, res) => {
   try {
-    if (!req.file) throw new Error('No file uploaded');
-
-    // Verificar si ya existe una imagen con el mismo nombre
-    const existingImage = await Image.findOne({ filename: req.file.originalname });
-    
-    if (existingImage) {
-      return res.status(409).json({ 
+    if (!req.file) {
+      return res.status(400).json({
         success: false,
-        error: `Ya existe una imagen con el nombre "${req.file.originalname}"`,
-        duplicate: true
+        error: 'No se subió ningún archivo'
       });
     }
 
-    // Resto de la lógica de subida...
-    const uploadStream = gridFSBucket.openUploadStream(req.file.originalname, {
-      metadata: {
-        uploadedBy: req.user._id,
-        mimeType: req.file.mimetype,
-        originalName: req.file.originalname
-      }
-    });
-
-    const fileId = await new Promise((resolve, reject) => {
-      uploadStream.end(req.file.buffer, () => resolve(uploadStream.id));
-      uploadStream.on('error', reject);
-    });
-
+    // Creamos la imagen en la colección
     const image = await Image.create({
       filename: req.file.originalname,
-      fileId: fileId,
-      url: `${API_URL}/api/images/${fileId}`,
+      fileId: req.file.id,
+      url: `${API_URL}/api/images/${req.file.id}`,
       mimeType: req.file.mimetype,
       size: req.file.size,
       uploadedBy: req.user._id
     });
 
-    res.status(201).json({ success: true, image });
+    // ✅ Asociar la imagen a la cabaña
+    const cabanaId = req.params.id; // asegurate que se llama :id en la ruta
+    const cabana = await Cabana.findById(cabanaId);
+    if (!cabana) {
+      return res.status(404).json({ success: false, error: 'Cabaña no encontrada' });
+    }
 
+    cabana.images.push(image._id);
+    await cabana.save();
+
+    // Respuesta
+    res.json({
+      success: true,
+      image: {
+        fileId: image.fileId,
+        url: image.url,
+        filename: image.filename
+      }
+    });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
+    console.error('Error al guardar imagen:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error interno del servidor'
     });
   }
 };
@@ -78,7 +76,8 @@ export const getImage = async (req, res) => {
     res.set({
       'Content-Type': file.metadata?.mimeType || 'image/jpeg',
       'Content-Disposition': `inline; filename="${file.filename}"`,
-      'Cache-Control': 'public, max-age=31536000'
+      'Cache-Control': 'public, max-age=31536000, immutable', // Cache de 1 año
+  'ETag': file._id.toString()
     });
 
     gridFSBucket.openDownloadStream(objectId).pipe(res);

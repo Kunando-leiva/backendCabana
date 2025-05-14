@@ -1,17 +1,21 @@
 import mongoose from 'mongoose';
 import { GridFSBucket } from 'mongodb';
 
-// Usa la misma conexión de Mongoose
-const conn = mongoose.connection;
-
-// Configura GridFS cuando la conexión esté lista
 let gridFSBucket;
-conn.once('open', () => {
-  gridFSBucket = new GridFSBucket(conn.db, {
-    bucketName: 'images', // Nombre del bucket
-     chunkSizeBytes: 1024 * 255, // Tamaño óptimo para imágenes
-  });
-  console.log('✅ GridFS configurado');
-});
+
+const initializeGridFS = () => {
+  if (mongoose.connection.readyState === 1) {
+    gridFSBucket = new GridFSBucket(mongoose.connection.db, {
+      bucketName: 'images',
+      chunkSizeBytes: 255 * 1024 // 255KB
+    });
+  }
+};
+
+// Inicialización inmediata si la conexión está lista
+initializeGridFS();
+
+// Reinicialización cuando se reconecte
+mongoose.connection.on('connected', initializeGridFS);
 
 export { gridFSBucket };
