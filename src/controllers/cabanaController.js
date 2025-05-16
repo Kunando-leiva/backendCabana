@@ -188,64 +188,36 @@ export const eliminarCabana = async (req, res) => {
     session.startTransaction();
     
     try {
-        // 1. Optimizar la búsqueda con proyección
-        const cabana = await Cabana.findById(req.params.id)
-            .select('images')
-            .lean()
-            .session(session);
-
+        const cabana = await Cabana.findById(req.params.id).session(session);
         if (!cabana) {
-            await session.abortTransaction();
-            session.endSession();
-            return res.status(404).json({ 
-                success: false,
-                error: 'Cabaña no encontrada' 
-            });
+            throw new Error('Cabaña no encontrada');
         }
 
-        // 2. Procesamiento en paralelo para imágenes
-        const imageUpdates = cabana.images?.length > 0 
-            ? Image.updateMany(
+        // Eliminar referencias en imágenes
+        if (cabana.images.length > 0) {
+            await Image.updateMany(
                 { _id: { $in: cabana.images } },
                 { $unset: { relatedCabana: "" } },
                 { session }
-              )
-            : Promise.resolve();
+            );
+        }
 
-        // 3. Eliminación optimizada
-        const deleteCabana = Cabana.deleteOne(
-            { _id: req.params.id },
-            { session }
-        );
-
-        // Ejecutar en paralelo
-        await Promise.all([imageUpdates, deleteCabana]);
+        await Cabana.findByIdAndDelete(req.params.id, { session });
         
         await session.commitTransaction();
         session.endSession();
 
-        // 4. Respuesta optimizada
         res.json({ 
             success: true,
-            message: 'Cabaña eliminada correctamente',
-            deletedId: req.params.id // Para referencia en frontend
+            message: 'Cabaña eliminada correctamente' 
         });
-
     } catch (error) {
-        // 5. Manejo de errores mejorado
-        await session.abortTransaction().catch(() => {});
-        session.endSession().catch(() => {});
+        await session.abortTransaction();
+        session.endSession();
         
-        console.error('Error eliminando cabaña:', error);
-        
-        res.status(500).json({ 
+        res.status(400).json({ 
             success: false,
-            error: process.env.NODE_ENV === 'production'
-                ? 'Error al eliminar la cabaña'
-                : error.message,
-            details: process.env.NODE_ENV === 'development' 
-                ? { stack: error.stack } 
-                : undefined
+            error: error.message 
         });
     }
 };
