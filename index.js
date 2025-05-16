@@ -10,6 +10,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import cron from 'node-cron';
+import http from 'http'; // Añadir importación de http
+import { webSocketServer } from './websocket.js'; // Cambiado a webSocketServer
+
 
 
 // Configuración de entorno y paths
@@ -19,6 +22,9 @@ const __dirname = path.dirname(__filename);
 
 // Inicializar Express
 const app = express();
+const server = http.createServer(app);
+
+
 
 // Configuración CORS mejorada
 const allowedOrigins = [
@@ -50,6 +56,15 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Conexión a la base de datos
 connectDB(); 
+
+// Configurar upgrade para WebSocket
+server.on('upgrade', (request, socket, head) => {
+  webSocketServer.handleUpgrade(request, socket, head, (ws) => {
+    webSocketServer.emit('connection', ws, request);
+  });
+});
+
+
 
 const setupImageBackups = () => {
   const backupDir = path.join(__dirname, 'backups');
@@ -153,9 +168,10 @@ app.use((req, res, next) => {
 
 // Iniciar servidor
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Servidor ejecutándose en puerto ${PORT}`);
+server.listen(PORT, () => {
+  console.log(`Servidor HTTP y WebSocket ejecutándose en puerto ${PORT}`);
   console.log(`Modo: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`WebSocket disponible en ws://localhost:${PORT}`);
   console.log(`URL de uploads: ${process.env.NODE_ENV === 'production' 
     ? 'https://backendcabana.onrender.com/uploads' 
     : `http://localhost:${PORT}/uploads`}`);

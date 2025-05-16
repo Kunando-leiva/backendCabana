@@ -1,22 +1,59 @@
 import Reserva from '../models/Reserva.js';
 import Cabana from '../models/Cabana.js';
 import User from '../models/User.js';
+import mongoose from 'mongoose';
 
 
 // Crear reserva (usuario autenticado)
 
   
   // Obtener todas las reservas (admin)
-  export const obtenerReservas = async (req, res) => {
-    try {
-      const reservas = await Reserva.find()
-        .populate('usuario', 'nombre email')
-        .populate('cabana', 'nombre precio');
-      res.json(reservas);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
+  // En reservaController.js
+export const obtenerReservas = async (req, res) => {
+  try {
+    console.log('Iniciando obtención de reservas para admin'); // Log de depuración
+    
+    // Validar que el usuario sea admin
+    if (req.user.rol !== 'admin') {
+      return res.status(403).json({ 
+        success: false,
+        error: 'Acceso no autorizado' 
+      });
     }
-  };
+
+    // Obtener reservas con información poblada
+    const reservas = await Reserva.find({})
+      .populate({
+        path: 'usuario',
+        select: 'nombre email'
+      })
+      .populate({
+        path: 'cabana',
+        select: 'nombre precio'
+      })
+      .sort({ createdAt: -1 }); // Ordenar por fecha de creación
+
+    console.log(`Se encontraron ${reservas.length} reservas`); // Log de depuración
+
+    res.status(200).json({
+      success: true,
+      count: reservas.length,
+      data: reservas
+    });
+  } catch (error) {
+    console.error('Error en obtenerReservas:', error); // Log detallado
+    
+    res.status(500).json({ 
+      success: false,
+      error: 'Error al obtener reservas',
+      // Solo mostrar detalles en desarrollo
+      details: process.env.NODE_ENV === 'development' ? {
+        message: error.message,
+        stack: error.stack
+      } : undefined
+    });
+  }
+};
 
 // Listar reservas del usuario
 export const listarMisReservas = async (req, res) => {
@@ -271,33 +308,75 @@ export const crearReservaAdmin = async (req, res) => {
 // reservaController.js
 export const obtenerReservasAdmin = async (req, res) => {
   try {
-    console.log('Usuario que hace la petición:', req.user);
+    const { page = 1, limit = 10, estado, fechaInicio, fechaFin } = req.query;
     
-    
-    const reservas = await Reserva.find()
-      .populate('usuario', 'nombre email')
-      .populate('cabana', 'nombre precio')
-      .sort({ fechaInicio: -1 }); // Ordenar por fecha más reciente
-
-    if (!reservas.length) {
-      return res.status(404).json({ message: 'No se encontraron reservas' });
+    // Construir filtros
+    const filter = {};
+    if (estado) filter.estado = estado;
+    if (fechaInicio && fechaFin) {
+      filter.fechaInicio = { $gte: new Date(fechaInicio) };
+      filter.fechaFin = { $lte: new Date(fechaFin) };
     }
 
-    res.status(200).json(reservas);
+    // Consulta con paginación
+    const [reservas, total] = await Promise.all([
+      Reserva.find(filter)
+        .populate('usuario', 'nombre email')
+        .populate('cabana', 'nombre precio')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      Reserva.countDocuments(filter)
+    ]);
+
+    const pages = Math.ceil(total / limit);
+
+    res.status(200).json({
+      success: true,
+      data: reservas,
+      total,
+      pages,
+      currentPage: parseInt(page)
+    });
   } catch (error) {
     console.error('Error en obtenerReservasAdmin:', error);
     res.status(500).json({ 
+      success: false,
       error: 'Error al obtener reservas',
-      details: error.message 
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
+
+
 export const obtenerReservaById = async (req, res) => {
   try {
+    // Validar que el ID sea un ObjectId válido
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'ID de reserva inválido' 
+      });
+    }
+
     const reserva = await Reserva.findById(req.params.id)
-      .populate('usuario', 'nombre email')
-      .populate('cabana', 'nombre precio imagenes');
-      
+      .populate({
+        path: 'usuario',
+        select: 'nombre email',
+        options: { lean: true } // Usar lean para objetos simples
+      })
+      .populate({
+        path: 'cabana',
+        select: 'nombre precio imagenes',
+        options: { 
+          lean: true,
+          // Proteger contra campos virtuales problemáticos
+          virtuals: false 
+        }
+      })
+      .lean(); // Convertir a objeto simple
+    
     if (!reserva) {
       return res.status(404).json({ 
         success: false,
@@ -305,19 +384,39 @@ export const obtenerReservaById = async (req, res) => {
       });
     }
     
-    // Formatear fechas para el frontend
+    // Formatear fechas manualmente
     const reservaFormateada = {
-      ...reserva._doc,
-      fechaInicio: reserva.fechaInicio.toISOString().split('T')[0],
-      fechaFin: reserva.fechaFin.toISOString().split('T')[0]
+      ...reserva,
+      fechaInicio: reserva.fechaInicio?.toISOString().split('T')[0] || '',
+      fechaFin: reserva.fechaFin?.toISOString().split('T')[0] || '',
+      // Asegurar que cabana tenga estructura válida
+      cabana: reserva.cabana ? {
+        _id: reserva.cabana._id,
+        nombre: reserva.cabana.nombre,
+        precio: reserva.cabana.precio,
+        // Manejar imágenes de forma segura
+        imagenes: Array.isArray(reserva.cabana.imagenes) ? 
+          reserva.cabana.imagenes.map(img => ({
+            _id: img._id,
+            url: img.url || `/api/images/${img.fileId}`
+          })) : []
+      } : null
     };
     
-    res.status(200).json({ success: true, data: reservaFormateada });
+    res.status(200).json({ 
+      success: true, 
+      data: reservaFormateada 
+    });
   } catch (error) {
+    console.error('Error en obtenerReservaById:', error);
     res.status(500).json({ 
       success: false,
       error: 'Error al obtener reserva',
-      details: error.message 
+      // Solo mostrar detalles en desarrollo
+      details: process.env.NODE_ENV === 'development' ? {
+        message: error.message,
+        stack: error.stack
+      } : undefined
     });
   }
 };

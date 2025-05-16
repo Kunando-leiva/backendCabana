@@ -4,7 +4,7 @@ import mongoose from 'mongoose';
 import Image from '../models/Image.js';
 import { API_URL } from '../../config/config.js';
 import { gridFSBucket } from '../../config/gridfs-config.js';
-import {  procesarImagenes } from '../utils/imageMiddleware.js';
+import {  procesarImagenes, buildImageResponse } from '../utils/imageMiddleware.js';
 
 export const crearCabana = async (req, res) => {
   const session = await mongoose.startSession();
@@ -188,114 +188,156 @@ export const eliminarCabana = async (req, res) => {
     session.startTransaction();
     
     try {
-        const cabana = await Cabana.findById(req.params.id).session(session);
+        // 1. Optimizar la búsqueda con proyección
+        const cabana = await Cabana.findById(req.params.id)
+            .select('images')
+            .lean()
+            .session(session);
+
         if (!cabana) {
-            throw new Error('Cabaña no encontrada');
+            await session.abortTransaction();
+            session.endSession();
+            return res.status(404).json({ 
+                success: false,
+                error: 'Cabaña no encontrada' 
+            });
         }
 
-        // Eliminar referencias en imágenes
-        if (cabana.images.length > 0) {
-            await Image.updateMany(
+        // 2. Procesamiento en paralelo para imágenes
+        const imageUpdates = cabana.images?.length > 0 
+            ? Image.updateMany(
                 { _id: { $in: cabana.images } },
                 { $unset: { relatedCabana: "" } },
                 { session }
-            );
-        }
+              )
+            : Promise.resolve();
 
-        await Cabana.findByIdAndDelete(req.params.id, { session });
+        // 3. Eliminación optimizada
+        const deleteCabana = Cabana.deleteOne(
+            { _id: req.params.id },
+            { session }
+        );
+
+        // Ejecutar en paralelo
+        await Promise.all([imageUpdates, deleteCabana]);
         
         await session.commitTransaction();
         session.endSession();
 
+        // 4. Respuesta optimizada
         res.json({ 
             success: true,
-            message: 'Cabaña eliminada correctamente' 
+            message: 'Cabaña eliminada correctamente',
+            deletedId: req.params.id // Para referencia en frontend
         });
+
     } catch (error) {
-        await session.abortTransaction();
-        session.endSession();
+        // 5. Manejo de errores mejorado
+        await session.abortTransaction().catch(() => {});
+        session.endSession().catch(() => {});
         
-        res.status(400).json({ 
+        console.error('Error eliminando cabaña:', error);
+        
+        res.status(500).json({ 
             success: false,
-            error: error.message 
+            error: process.env.NODE_ENV === 'production'
+                ? 'Error al eliminar la cabaña'
+                : error.message,
+            details: process.env.NODE_ENV === 'development' 
+                ? { stack: error.stack } 
+                : undefined
         });
     }
 };
 
 // Listar todas las cabañas
 export const listarCabanas = async (req, res) => {
-    try {
-        const cabanas = await Cabana.find()
-            .populate({
-                path: 'images',
-                select: 'url filename',
-                match: { isPublic: true } // Solo imágenes públicas
-            })
-            .lean();
+  try {
+    const cabanas = await Cabana.find()
+      .populate({
+        path: 'images',
+        select: 'url filename size createdAt',
+        match: { isPublic: true }
+      })
+      .populate({
+        path: 'imagenPrincipal',
+        select: 'url filename -_id'
+      })
+      .lean();
 
-        // Construir URLs completas para las imágenes
-        const response = cabanas.map(cabana => ({
-            ...cabana,
-            images: cabana.images?.map(img => ({
-                ...img,
-                url: img.url || `${API_URL}/api/images/${img.fileId}`
-            })) || [],
-            imagenPrincipal: cabana.images?.[0]?.url || `${API_URL}/default-cabana.jpg`
-        }));
+    // Formatear URLs
+    const response = cabanas.map(cabana => ({
+      ...cabana,
+      images: cabana.images?.map(img => ({
+        ...img,
+        url: img.url?.startsWith('http') 
+          ? img.url 
+          : `${API_URL}${img.url?.startsWith('/') ? '' : '/'}${img.url}`
+      })) || [],
+      imagenPrincipal: cabana.imagenPrincipal?.url 
+        ? (cabana.imagenPrincipal.url.startsWith('http')
+            ? cabana.imagenPrincipal.url
+            : `${API_URL}${cabana.imagenPrincipal.url.startsWith('/') ? '' : '/'}${cabana.imagenPrincipal.url}`)
+        : `${API_URL}/default-cabana.jpg`
+    }));
 
-        res.status(200).json({
-            success: true,
-            count: cabanas.length,
-            data: response
-        });
-    } catch (error) {
-        res.status(500).json({ 
-            success: false,
-            error: error.message 
-        });
-    }
+    res.status(200).json({
+      success: true,
+      count: response.length,
+      data: response
+    });
+  } catch (error) {
+    console.error('Error en listarCabanas:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener cabañas',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
 };
 
 // Ver detalles de una cabaña
 export const verCabana = async (req, res) => {
-    try {
-      const cabana = await Cabana.findById(req.params.id)
-        .populate({
-          path: 'images',
-          select: 'filename url fileId mimeType size',
-          match: { 
-            $or: [
-              { isPublic: true },
-              { uploadedBy: req.user?._id }
-            ]
-          }
-        })
-        .lean();
-  
-      if (!cabana) {
-        return res.status(404).json({
-          success: false,
-          error: 'Cabaña no encontrada'
-        });
-      }
-  
-      const cabanaConImagenes = {
-        ...cabana,
-        images: buildImageResponse(cabana.images || []),
-        imagenPrincipal: cabana.images?.[0]?.url || `${API_URL}/default-cabana.jpg`
-      };
-  
-      res.status(200).json({
-        success: true,
-        data: cabanaConImagenes
-      });
-    } catch (error) {
-      res.status(400).json({ 
+  try {
+    const cabana = await Cabana.findById(req.params.id)
+      .populate('images imagenPrincipal')
+      .lean();
+
+    if (!cabana) {
+      return res.status(404).json({
         success: false,
-        error: error.message 
+        error: 'Cabaña no encontrada'
       });
     }
-  };
+
+    // Formatear respuesta
+    const formatImage = (img) => ({
+      _id: img?._id,
+      url: img?.url?.startsWith('http') 
+        ? img.url 
+        : `${process.env.API_URL || 'http://localhost:5000'}${img?.url?.startsWith('/') ? '' : '/'}${img?.url || ''}`,
+      filename: img?.filename || 'default.jpg'
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        ...cabana,
+        images: cabana.images?.map(formatImage) || [],
+        imagenPrincipal: formatImage(cabana.imagenPrincipal || cabana.images?.[0])
+      }
+    });
+
+  } catch (error) {
+    console.error('Error en verCabana:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener cabaña',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
 
 // Listar cabañas disponibles en un rango de fechas
 export const listarCabanasDisponibles = async (req, res) => {
@@ -405,40 +447,42 @@ export const getServiciosDisponibles = async (req, res) => {
 
 
 // Obtener imágenes de cabaña con mejor manejo de errores
-// Obtener imágenes de cabaña con mejor manejo de errores
 export const obtenerImagenesCabana = async (req, res) => {
-    try {
-      const cabana = await Cabana.findById(req.params.id)
-        .populate({
-          path: 'images',
-          select: 'url filename fileId mimeType size',
-          match: { fileId: { $exists: true } }
-        });
-  
-      if (!cabana) {
-        return res.status(404).json({ 
-          success: false,
-          error: 'Cabaña no encontrada' 
-        });
-      }
-  
-      const imagenes = buildImageResponse(cabana.images);
-  
-      res.json({ 
-        success: true, 
-        data: imagenes.length > 0 ? imagenes : [{
-          url: `${API_URL}/default-cabana.jpg`,
-          filename: 'default.jpg'
-        }]
-      });
-    } catch (error) {
-      res.status(500).json({
+  try {
+    const cabana = await Cabana.findById(req.params.id)
+      .select('images')
+      .populate({
+        path: 'images',
+        select: 'url filename -_id'
+      })
+      .lean();
+
+    if (!cabana) {
+      return res.status(404).json({
         success: false,
-        error: 'Error al obtener imágenes',
-        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        error: 'Cabaña no encontrada'
       });
     }
-  };
+
+    res.status(200).json({
+      success: true,
+      data: cabana.images?.map(img => ({
+        ...img,
+        url: img.url?.startsWith('http') 
+          ? img.url 
+          : `${process.env.API_URL || 'http://localhost:5000'}${img.url}`
+      })) || []
+    });
+
+  } catch (error) {
+    console.error('Error en obtenerImagenesCabana:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener imágenes',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
 
   export const asociarImagenes = async (req, res) => {
     const session = await mongoose.startSession();
@@ -522,6 +566,40 @@ export const obtenerImagenesCabana = async (req, res) => {
     }
 };
   
+// controllers/imageController.js
+export const obtenerTodasImagenes = async (req, res) => {
+  try {
+    const images = await Image.find({ isPublic: true })
+      .select('url filename size createdAt mimeType')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const formattedImages = images.map(img => ({
+      ...img,
+      url: formatImageUrl(img.url, img._id)
+    }));
+
+    res.status(200).json({
+      success: true,
+      count: formattedImages.length,
+      data: formattedImages
+    });
+  } catch (error) {
+    console.error('Error al obtener imágenes:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al cargar imágenes',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Función auxiliar para formatear URLs
+function formatImageUrl(url, imageId) {
+  if (!url) return `${API_URL}/api/images/${imageId}`;
+  if (url.startsWith('http')) return url;
+  return `${API_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+}
 
 
 export default {

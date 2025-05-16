@@ -94,22 +94,23 @@ export const getImage = async (req, res) => {
 // Modifica getGallery así:
 export const getGallery = async (req, res) => {
   try {
-    // Traer todas las imágenes, sin importar si son públicas o privadas
     const images = await Image.find()
       .populate('uploadedBy', 'name email')
       .sort({ createdAt: -1 })
       .lean();
 
+    // Estructura de respuesta consistente con lo que espera el frontend
     res.json({
       success: true,
-      images: images.map(img => ({
-        id: img._id,
+      data: images.map(img => ({
+        _id: img._id,
         filename: img.filename,
         url: img.url,
-        isPublic: img.isPublic,
-        uploadedBy: img.uploadedBy,
         createdAt: img.createdAt,
-        size: img.size
+        // Asegúrate de incluir todos los campos que usa el frontend
+        ...(img.size && { size: img.size }),
+        ...(img.uploadedBy && { uploadedBy: img.uploadedBy }),
+        ...(img.isPublic && { isPublic: img.isPublic })
       }))
     });
 

@@ -8,6 +8,7 @@ import {
     listarCabanasDisponibles,
     obtenerImagenesCabana,
     asociarImagenes,
+    obtenerTodasImagenes
 
 } from '../controllers/cabanaController.js';
 import { auth, isAdmin } from '../middlewares/auth.js';
@@ -16,7 +17,7 @@ import { procesarImagenes } from '../utils/imageMiddleware.js';
 import { API_URL } from '../../config/config.js';
 import { handleGridFSUpload } from '../utils/multerConfig.js';
 import { uploadImage } from '../controllers/imageController.js';
-
+import mongoose from 'mongoose';
 
 const router = express.Router();
 
@@ -27,8 +28,28 @@ const imageUpload = [...adminAuth, upload.array('images', 5), procesarImagenes];
 // --- Rutas Públicas ---
 router.get('/', listarCabanas);
 router.get('/disponibles', listarCabanasDisponibles);
-router.get('/:id', verCabana);
-router.get('/:id/imagenes', obtenerImagenesCabana);
+router.get('/', obtenerTodasImagenes);
+router.get('/:id', 
+  // Validación de ID
+  async (req, res, next) => {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'ID de cabaña no válido' 
+      });
+    }
+    next();
+  },
+  verCabana
+);
+// Ruta para imágenes de cabaña
+router.get('/:id/images',
+  async (req, res, next) => {
+    console.log('Solicitud de imágenes para cabaña ID:', req.params.id);
+    next();
+  },
+  obtenerImagenesCabana
+);
 
 // --- Rutas Protegidas ---
 router.post('/', 
@@ -86,6 +107,62 @@ router.get('/:id/imagen-principal', async (req, res) => {
             details: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
+});
+
+// Obtener todas las imágenes con opción de filtrar por cabaña
+router.get('/images/all', async (req, res) => {
+  try {
+    // Opción 1: Obtener imágenes a través de las cabañas
+    const cabanas = await Cabana.find()
+      .populate({
+        path: 'images',
+        select: 'url filename size createdAt',
+        match: { isPublic: true }
+      })
+      .lean();
+
+    let images = [];
+    cabanas.forEach(cabana => {
+      if (cabana.images && cabana.images.length > 0) {
+        images = [
+          ...images,
+          ...cabana.images.map(img => ({
+            ...img,
+            cabanaId: cabana._id,
+            cabanaNombre: cabana.nombre
+          }))
+        ];
+      }
+    });
+
+    // Opción 2: Si no hay imágenes en cabañas, obtener directamente
+    if (images.length === 0) {
+      images = await Image.find({ isPublic: true })
+        .select('url filename size createdAt')
+        .lean();
+    }
+
+    // Formatear URLs
+    const formattedImages = images.map(img => ({
+      ...img,
+      url: img.url?.startsWith('http') 
+        ? img.url 
+        : `${API_URL}${img.url?.startsWith('/') ? '' : '/'}${img.url}`
+    }));
+
+    res.status(200).json({
+      success: true,
+      count: formattedImages.length,
+      data: formattedImages
+    });
+  } catch (error) {
+    console.error('Error en /images/all:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener imágenes',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
 });
 
 export default router;

@@ -114,7 +114,9 @@ cabanaSchema.virtual('imagenPrincipalUrl').get(function() {
     if (this.imagenPrincipal) {
         return `/api/images/${this.imagenPrincipal}`;
     }
-    return this.images.length > 0 ? `/api/images/${this.images[0]}` : '/default-cabana.jpg';
+    return (Array.isArray(this.images)) && this.images.length > 0 ? 
+    `/api/images/${this.images[0]}` : 
+    '/default-cabana.jpg';
 });
 
 // Índices para mejor performance

@@ -41,3 +41,13 @@ export const procesarImagenes = async (req, res, next) => {
         });
     }
 };
+
+export const buildImageResponse = (images) => {
+  return images.map(img => ({
+    _id: img._id,
+    filename: img.filename,
+    mimeType: img.mimeType,
+    size: img.size,
+    url: img.url || `${API_URL}/api/images/${img.fileId}`
+  }));
+};
