@@ -94,7 +94,7 @@ export const crearCabana = async (req, res) => {
     res.status(400).json({
       success: false,
       error: error.message,
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      details: API_URL === 'development' ? error.stack : undefined
     });
   } finally {
     session.endSession();
@@ -263,7 +263,7 @@ export const listarCabanas = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error al obtener cabañas',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details: API_URL === 'development' ? error.message : undefined
     });
   }
 };
@@ -287,7 +287,7 @@ export const verCabana = async (req, res) => {
       _id: img?._id,
       url: img?.url?.startsWith('http') 
         ? img.url 
-        : `${process.env.API_URL || 'http://localhost:5000'}${img?.url?.startsWith('/') ? '' : '/'}${img?.url || ''}`,
+        : `${API_URL}${img?.url?.startsWith('/') ? '' : '/'}${img?.url || ''}`,
       filename: img?.filename || 'default.jpg'
     });
 
@@ -305,7 +305,7 @@ export const verCabana = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error al obtener cabaña',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details: API_URL === 'development' ? error.message : undefined
     });
   }
 };
@@ -377,7 +377,7 @@ export const listarCabanasDisponibles = async (req, res) => {
         res.status(500).json({ 
             success: false,
             error: 'Error al buscar cabañas disponibles',
-            details: process.env.NODE_ENV === 'development' ? error.message : undefined
+            details: API_URL === 'development' ? error.message : undefined
         });
     }
 };
@@ -442,7 +442,7 @@ export const obtenerImagenesCabana = async (req, res) => {
         ...img,
         url: img.url?.startsWith('http') 
           ? img.url 
-          : `${process.env.API_URL || 'http://localhost:5000'}${img.url}`
+          : `${API_URL}${img.url}`
       })) || []
     });
 
@@ -451,7 +451,7 @@ export const obtenerImagenesCabana = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error al obtener imágenes',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details: API_URL === 'development' ? error.message : undefined
     });
   }
 };
@@ -531,7 +531,7 @@ export const obtenerImagenesCabana = async (req, res) => {
         res.status(500).json({ 
             success: false,
             error: 'Error al asociar imágenes',
-            details: process.env.NODE_ENV === 'development' ? error.message : undefined
+            details: API_URL === 'development' ? error.message : undefined
         });
     } finally {
         session.endSession();
@@ -561,7 +561,7 @@ export const obtenerTodasImagenes = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error al cargar imágenes',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details: API_URL === 'development' ? error.message : undefined
     });
   }
 };

@@ -12,6 +12,7 @@ import fs from 'fs';
 import cron from 'node-cron';
 import http from 'http'; // Añadir importación de http
 import { webSocketServer } from './websocket.js'; // Cambiado a webSocketServer
+import { API_URL } from './config/config.js';
 
 
 
@@ -104,7 +105,7 @@ const setupImageBackups = () => {
 };
 
 // Iniciar el servicio de backups
-if (process.env.NODE_ENV === 'production') {
+if (API_URL === 'production') {
   setupImageBackups();
 }
 
@@ -154,13 +155,13 @@ app.use((err, req, res, next) => {
   res.status(500).json({ 
     success: false,
     error: 'Error interno del servidor',
-    details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    details: API_URL === 'development' ? err.message : undefined
   });
 });
 
 // Redirección HTTPS en producción
 app.use((req, res, next) => {
-  if (process.env.NODE_ENV === 'production' && req.headers['x-forwarded-proto'] !== 'https') {
+  if (API_URL === 'production' && req.headers['x-forwarded-proto'] !== 'https') {
     return res.redirect(`https://${req.headers.host}${req.url}`);
   }
   next();
@@ -170,9 +171,8 @@ app.use((req, res, next) => {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`Servidor HTTP y WebSocket ejecutándose en puerto ${PORT}`);
-  console.log(`Modo: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Modo: ${API_URL || 'development'}`);
   console.log(`WebSocket disponible en ws://localhost:${PORT}`);
-  console.log(`URL de uploads: ${process.env.NODE_ENV === 'production' 
-    ? 'https://backendcabana.onrender.com/uploads' 
-    : `http://localhost:${PORT}/uploads`}`);
+  console.log(`URL de uploads: ${API_URL}/uploads`);
+
 });

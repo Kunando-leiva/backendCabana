@@ -74,7 +74,7 @@ export const handleGridFSUpload = async (req, res, next) => {
     res.status(500).json({
       success: false,
       error: 'Error al procesar imágenes',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details: API_URL === 'development' ? error.message : undefined
     });
   }
 };

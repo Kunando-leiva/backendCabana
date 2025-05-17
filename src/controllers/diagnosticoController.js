@@ -69,7 +69,7 @@ export const verificarImagenes = async (req, res) => {
         res.status(500).json({
             success: false,
             error: "Error al verificar imágenes",
-            details: process.env.NODE_ENV === 'development' ? error.message : undefined
+            details: API_URL === 'development' ? error.message : undefined
         });
     }
 };

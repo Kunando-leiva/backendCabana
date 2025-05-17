@@ -21,7 +21,7 @@ export const uploadImage = async (req, res) => {
       mimeType: req.file.mimetype,
       size: req.file.size,
       uploadedBy: req.user._id
-    });
+    }); 
 
     // ✅ Asociar la imagen a la cabaña
     const cabanaId = req.params.id; // asegurate que se llama :id en la ruta
@@ -85,7 +85,7 @@ export const getImage = async (req, res) => {
   } catch (error) {
     res.status(500).json({ 
       error: 'Error del servidor',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details: API_URL === 'development' ? error.message : undefined
     });
   }
 };
@@ -118,7 +118,7 @@ export const getGallery = async (req, res) => {
     res.status(500).json({ 
       success: false,
       error: 'Error al obtener la galería',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details: API_URL === 'development' ? error.message : undefined
     });
   }
 };
@@ -157,7 +157,7 @@ export const deleteImage = async (req, res) => {
     res.status(500).json({ 
       success: false,
       error: 'Error al eliminar la imagen',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details: API_URL === 'development' ? error.message : undefined
     });
   }
 };

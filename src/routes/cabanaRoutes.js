@@ -104,7 +104,7 @@ router.get('/:id/imagen-principal', async (req, res) => {
         res.status(500).json({ 
             success: false, 
             error: 'Error al obtener imagen',
-            details: process.env.NODE_ENV === 'development' ? error.message : undefined
+            details: API_URL === 'development' ? error.message : undefined
         });
     }
 });
@@ -160,7 +160,7 @@ router.get('/images/all', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error al obtener imágenes',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details: API_URL === 'development' ? error.message : undefined
     });
   }
 });

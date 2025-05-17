@@ -47,7 +47,7 @@ export const obtenerReservas = async (req, res) => {
       success: false,
       error: 'Error al obtener reservas',
       // Solo mostrar detalles en desarrollo
-      details: process.env.NODE_ENV === 'development' ? {
+      details: API_URL === 'development' ? {
         message: error.message,
         stack: error.stack
       } : undefined
@@ -300,7 +300,7 @@ export const crearReservaAdmin = async (req, res) => {
     res.status(500).json({ 
       success: false,
       error: 'Error interno al crear reserva',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details: API_URL === 'development' ? error.message : undefined
     });
   }
 };
@@ -344,7 +344,7 @@ export const obtenerReservasAdmin = async (req, res) => {
     res.status(500).json({ 
       success: false,
       error: 'Error al obtener reservas',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details: API_URL === 'development' ? error.message : undefined
     });
   }
 };
@@ -413,7 +413,7 @@ export const obtenerReservaById = async (req, res) => {
       success: false,
       error: 'Error al obtener reserva',
       // Solo mostrar detalles en desarrollo
-      details: process.env.NODE_ENV === 'development' ? {
+      details: API_URL=== 'development' ? {
         message: error.message,
         stack: error.stack
       } : undefined
