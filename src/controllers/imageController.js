@@ -94,24 +94,45 @@ export const getImage = async (req, res) => {
 // Modifica getGallery así:
 export const getGallery = async (req, res) => {
   try {
-    const images = await Image.find()
-      .populate('uploadedBy', 'name email')
-      .sort({ createdAt: -1 })
-      .lean();
+    const { limit = 12, offset = 0 } = req.query;
+    
+    const [images, total] = await Promise.all([
+      Image.find({ isPublic: true })
+        .populate('uploadedBy', 'name email')
+        .populate('relatedCabana', 'name')
+        .sort({ createdAt: -1 })
+        .skip(parseInt(offset))
+        .limit(parseInt(limit))
+        .lean(),
+      Image.countDocuments({ isPublic: true })
+    ]);
 
-    // Estructura de respuesta consistente con lo que espera el frontend
+    // Estructura de respuesta mejorada
     res.json({
       success: true,
       data: images.map(img => ({
         _id: img._id,
+        fileId: img.fileId,
         filename: img.filename,
-        url: img.url,
+        url: img.url, // Asegúrate que esta URL es accesible
+        fullUrl: img.fullUrl, // Usar este campo si está disponible
         createdAt: img.createdAt,
-        // Asegúrate de incluir todos los campos que usa el frontend
-        ...(img.size && { size: img.size }),
-        ...(img.uploadedBy && { uploadedBy: img.uploadedBy }),
-        ...(img.isPublic && { isPublic: img.isPublic })
-      }))
+        size: img.size,
+        uploadedBy: {
+          _id: img.uploadedBy._id,
+          name: img.uploadedBy.name
+        },
+        relatedCabana: img.relatedCabana ? {
+          _id: img.relatedCabana._id,
+          name: img.relatedCabana.name
+        } : null,
+        isPublic: img.isPublic
+      })),
+      pagination: {
+        total,
+        limit: parseInt(limit),
+        offset: parseInt(offset)
+      }
     });
 
   } catch (error) {
