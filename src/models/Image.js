@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { API_URL } from '../../config/config.js';
 
 const ImageSchema = new mongoose.Schema({
   filename: {
@@ -57,8 +58,15 @@ ImageSchema.index({ relatedCabana: 1 });
 
 // Virtual para URL completa
 ImageSchema.virtual('fullUrl').get(function() {
-  return `${process.env.API_URL || 'http://localhost:5000'}${this.url}`;
+  // Usa API_URL importada de tu config en producción
+  // Y localhost en desarrollo (NODE_ENV lo detecta automáticamente)
+  const baseUrl = process.env.NODE_ENV === 'production'
+    ? API_URL // Usa tu constante exportada
+    : 'http://localhost:5000';
+  
+  return `${baseUrl}${this.url}`;
 });
+
 
 const Image = mongoose.model('Image', ImageSchema);
 export default Image;
