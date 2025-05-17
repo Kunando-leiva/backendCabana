@@ -60,9 +60,7 @@ ImageSchema.index({ relatedCabana: 1 });
 ImageSchema.virtual('fullUrl').get(function() {
   // Usa API_URL importada de tu config en producción
   // Y localhost en desarrollo (NODE_ENV lo detecta automáticamente)
-  const baseUrl = process.env.NODE_ENV === 'production'
-    ? API_URL // Usa tu constante exportada
-    : 'http://localhost:5000';
+  const baseUrl = 'https://backendcabana.onrender.com' 
   
   return `${baseUrl}${this.url}`;
 });
