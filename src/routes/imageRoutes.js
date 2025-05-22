@@ -10,6 +10,7 @@ import { upload,handleGridFSUpload,  } from '../utils/multerConfig.js';
 import { verificarImagenes } from '../controllers/diagnosticoController.js';
 import GridFSBucket from 'mongodb';
 import mongoose from 'mongoose';
+
 const debugMiddleware = (req, res, next) => {
   console.log('Archivo recibido:', req.file);
   console.log('Cuerpo de la solicitud:', req.body);
@@ -19,6 +20,7 @@ const debugMiddleware = (req, res, next) => {
 const router = express.Router();
 
 router.get('/diagnostico/imagenes', verificarImagenes);
+
 // Subida de imágenes (solo admin)
 router.post('/upload',
   auth,

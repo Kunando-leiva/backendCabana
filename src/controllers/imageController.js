@@ -145,40 +145,69 @@ export const getGallery = async (req, res) => {
 };
 
 
+// En imageController.js
 export const deleteImage = async (req, res) => {
   try {
-    const objectId = new mongoose.Types.ObjectId(req.params.id);
+    const { docId, fileId } = req.body;
 
-    // Verificar existencia primero
-    const imageExists = await Image.findOne({ fileId: objectId });
-    if (!imageExists) {
-      return res.status(404).json({ success: false, error: 'Imagen no encontrada' });
+    console.log('Recibido para eliminar:', { docId, fileId });
+
+    // 1. Buscar la imagen usando CUALQUIER ID relevante
+    const image = await Image.findOne({
+      $or: [
+        { _id: docId },
+        { fileId: fileId },
+        { _id: fileId },
+        { fileId: docId }
+      ]
+    });
+
+    if (!image) {
+      console.log('Imagen no encontrada con estos IDs:', { docId, fileId });
+      return res.status(404).json({ 
+        success: false,
+        error: 'Imagen no encontrada con los IDs proporcionados'
+      });
     }
 
-    // Verificar permisos (solo admin o el propietario puede borrar)
-    if (!req.user._id.equals(imageExists.uploadedBy) && !req.user.isAdmin) {
-      return res.status(403).json({ success: false, error: 'No autorizado' });
+    console.log('Imagen encontrada:', {
+      _id: image._id,
+      fileId: image.fileId,
+      filename: image.filename
+    });
+
+    // 2. Eliminar de GridFS (usar fileId de la imagen encontrada)
+    if (image.fileId) {
+      const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, {
+        bucketName: 'uploads'
+      });
+      await bucket.delete(new mongoose.Types.ObjectId(image.fileId));
+      console.log('Archivo eliminado de GridFS con ID:', image.fileId);
     }
 
-    // Eliminar en paralelo
-    await Promise.all([
-      gridFSBucket.delete(objectId),
-      Image.deleteOne({ fileId: objectId }),
-      mongoose.model('Cabana').updateMany(
-        { images: objectId },
-        { $pull: { images: objectId } }
-      )
-    ]);
+    // 3. Eliminar el documento de la colección images
+    await Image.findByIdAndDelete(image._id);
+    console.log('Documento eliminado de la colección con ID:', image._id);
 
     res.json({ 
       success: true,
-      message: 'Imagen eliminada correctamente'
+      message: 'Imagen eliminada correctamente',
+      deletedIds: {
+        docId: image._id,
+        fileId: image.fileId
+      }
     });
+
   } catch (error) {
+    console.error('Error en deleteImage:', {
+      message: error.message,
+      stack: error.stack,
+      receivedIds: req.body
+    });
     res.status(500).json({ 
       success: false,
-      error: 'Error al eliminar la imagen',
-      details: API_URL === 'development' ? error.message : undefined
+      error: 'Error al eliminar imagen',
+      details: error.message
     });
   }
 };

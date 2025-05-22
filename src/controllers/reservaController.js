@@ -421,4 +421,63 @@ export const obtenerReservaById = async (req, res) => {
   }
 };
 
+export const getFechasOcupadas = async (req, res) => {
+  try {
+    const { cabanaId, startDate, endDate } = req.query;
+
+    // Validación básica de parámetros
+    if (cabanaId && !mongoose.Types.ObjectId.isValid(cabanaId)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'ID de cabaña inválido'
+      });
+    }
+
+    const query = { estado: { $ne: 'cancelada' } }; // Excluir reservas canceladas
+    
+    if (cabanaId) query.cabana = cabanaId;
+    
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        return res.status(400).json({ 
+          success: false,
+          error: 'Formato de fecha inválido. Use YYYY-MM-DD'
+        });
+      }
+
+      query.$or = [
+        { 
+          fechaInicio: { $lte: end },
+          fechaFin: { $gte: start }
+        }
+      ];
+    }
+
+    const reservas = await Reserva.find(query)
+      .select('fechaInicio fechaFin')
+      .lean();
+
+    // Formatear respuesta para el frontend
+    const fechasOcupadas = reservas.flatMap(reserva => [
+      reserva.fechaInicio.toISOString().split('T')[0],
+      reserva.fechaFin.toISOString().split('T')[0]
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: [...new Set(fechasOcupadas)] // Eliminar duplicados
+    });
+
+  } catch (error) {
+    console.error('Error en getFechasOcupadas:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Error al obtener fechas ocupadas',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
 
