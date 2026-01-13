@@ -2,160 +2,76 @@ import Reserva from '../models/Reserva.js';
 import Cabana from '../models/Cabana.js';
 import User from '../models/User.js';
 import mongoose from 'mongoose';
+import { 
+  calcularPrecioTotal, 
+  obtenerDesglosePrecios,
+  crearFechaArgentina
+} from '../utils/precioCabana.js';
 
-
-// Crear reserva (usuario autenticado)
-
-  
-  // Obtener todas las reservas (admin)
-  // En reservaController.js
-export const obtenerReservas = async (req, res) => {
+// ============================================
+// 1. NUEVA FUNCIÓN: CALCULAR PRECIO RESERVA
+// ============================================
+export const calcularPrecioReserva = async (req, res) => {
   try {
-    console.log('Iniciando obtención de reservas para admin'); // Log de depuración
+    const { fechaInicio, fechaFin } = req.body;
     
-    // Validar que el usuario sea admin
-    if (req.user.rol !== 'admin') {
-      return res.status(403).json({ 
+    if (!fechaInicio || !fechaFin) {
+      return res.status(400).json({ 
         success: false,
-        error: 'Acceso no autorizado' 
+        error: 'Se requieren fechaInicio y fechaFin'
       });
     }
-
-    // Obtener reservas con información poblada
-    const reservas = await Reserva.find({})
-      .populate({
-        path: 'usuario',
-        select: 'nombre email'
-      })
-      .populate({
-        path: 'cabana',
-        select: 'nombre precio'
-      })
-      .sort({ createdAt: -1 }); // Ordenar por fecha de creación
-
-    console.log(`Se encontraron ${reservas.length} reservas`); // Log de depuración
-
+    
+    // Usar la función específica para Argentina
+    const fechaInicioDate = crearFechaArgentina(fechaInicio);
+    const fechaFinDate = crearFechaArgentina(fechaFin);
+    
+    // MODIFICACIÓN: Permitir mismo día (reserva de 1 día)
+    if (fechaInicioDate > fechaFinDate) {  // Cambiar >= por >
+      return res.status(400).json({ 
+        success: false,
+        error: 'La fecha fin no puede ser anterior a la fecha inicio' 
+      });
+    }
+    
+    // Calcular precio dinámico
+    const precioTotal = calcularPrecioTotal(fechaInicioDate, fechaFinDate);
+    const desglose = obtenerDesglosePrecios(fechaInicioDate, fechaFinDate);
+    
+    // Formatear para mostrar en pesos argentinos
+    const formatoArgentino = new Intl.NumberFormat('es-AR', {
+      style: 'currency',
+      currency: 'ARS',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    });
+    
     res.status(200).json({
       success: true,
-      count: reservas.length,
-      data: reservas
+      precioTotal,
+      precioTotalFormateado: formatoArgentino.format(precioTotal),
+      desglose: desglose.desglose.map(dia => ({
+        ...dia,
+        precioFormateado: formatoArgentino.format(dia.precio)
+      })),
+      totalDias: desglose.desglose.length,
+      mensaje: `Precio calculado para ${desglose.desglose.length} día${desglose.desglose.length !== 1 ? 's' : ''}`,
+      moneda: 'ARS (Pesos Argentinos)'
     });
-  } catch (error) {
-    console.error('Error en obtenerReservas:', error); // Log detallado
     
-    res.status(500).json({ 
+  } catch (error) {
+    console.error('Error calculando precio:', error);
+    res.status(500).json({
       success: false,
-      error: 'Error al obtener reservas',
-      // Solo mostrar detalles en desarrollo
-      details: API_URL === 'development' ? {
-        message: error.message,
-        stack: error.stack
-      } : undefined
+      error: 'Error al calcular el precio',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
 
-// Listar reservas del usuario
-export const listarMisReservas = async (req, res) => {
-    try {
-        const reservas = await Reserva.find({ usuario: req.user.id }).populate('cabana');
-        res.status(200).json(reservas);
-    } catch (error) {
-        res.status(400).json({ error: error.message });
-    }
-};
-
-export const eliminarReserva = async (req, res) => {
-  try {
-    const reserva = await Reserva.findByIdAndDelete(req.params.id);
-    if (!reserva) {
-      return res.status(404).json({ success: false, error: 'Reserva no encontrada' });
-    }
-    
-    // Opcional: Limpiar fechas reservadas en la cabaña
-    await Cabana.findByIdAndUpdate(reserva.cabana, {
-      $pull: { fechasReservadas: { reservaId: reserva._id } }
-    });
-    
-    res.json({ success: true, message: 'Reserva eliminada correctamente',deletedId: reserva._id });
-  } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      error: 'Error al eliminar reserva',
-      details: error.message 
-    });
-  }
-};
-
-// controllers/reservaController.js
-export const actualizarReserva = async (req, res) => {
-  try {
-    const { fechaInicio, fechaFin, estado, huesped, cabana } = req.body;
-    
-    // Validar disponibilidad si se cambia cabaña o fechas
-    if (cabana || fechaInicio || fechaFin) {
-      const existeOtraReserva = await Reserva.findOne({
-        cabana: cabana || req.reserva.cabana,
-        _id: { $ne: req.params.id },
-        $or: [
-          { fechaInicio: { $lt: fechaFin || req.reserva.fechaFin }, 
-           fechaFin: { $gt: fechaInicio || req.reserva.fechaInicio } 
-          }
-        ]
-      });
-      
-      if (existeOtraReserva) {
-        return res.status(400).json({ error: "La cabaña ya está reservada en esas fechas" });
-      }
-    }
-
-    const reservaActualizada = await Reserva.findByIdAndUpdate(
-      req.params.id,
-      { fechaInicio, fechaFin, estado, huesped, cabana },
-      { new: true, runValidators: true }
-    ).populate('cabana usuario');
-
-    res.status(200).json({ success: true, data: reservaActualizada });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-};
-
-// Listar TODAS las reservas (solo admin)
-export const listarTodasReservas = async (req, res) => {
-    try {
-        if (req.user.rol !== "admin") {
-            return res.status(403).json({ error: "Acceso denegado" });
-        }
-        const reservas = await Reserva.find().populate("usuario cabana");
-        res.status(200).json(reservas);
-    } catch (error) {
-        res.status(400).json({ error: error.message });
-    }
-};
-
-// Filtrar reservas por cabaña o fechas (admin/usuario)
-export const filtrarReservas = async (req, res) => {
-    try {
-        const { cabanaId, fechaInicio, fechaFin } = req.query;
-        const filtro = {};
-
-        if (cabanaId) filtro.cabana = cabanaId;
-        if (fechaInicio && fechaFin) {
-            filtro.fechaInicio = { $gte: new Date(fechaInicio) };
-            filtro.fechaFin = { $lte: new Date(fechaFin) };
-        }
-     
-
-        const reservas = await Reserva.find(filtro).populate("cabana");
-        res.status(200).json(reservas);
-    } catch (error) {
-        res.status(400).json({ error: error.message });
-    }
-};
-
-// En reservaController.js
-// En controllers/reservaController.js
+// ============================================
+// 2. MODIFICAR: crearReservaAdmin
+// ============================================
 export const crearReservaAdmin = async (req, res) => {
   try {
     const { cabanaId, fechaInicio, fechaFin, huesped } = req.body;
@@ -169,7 +85,7 @@ export const crearReservaAdmin = async (req, res) => {
     }
 
     // Validar campos del huésped
-    if (!huesped || !huesped.dni || !huesped.nombre || !huesped.apellido) {
+    if (!huesped.dni || !huesped.nombre || !huesped.apellido) {
       return res.status(400).json({
         success: false,
         error: 'Faltan datos obligatorios del huésped: dni, nombre o apellido'
@@ -188,12 +104,12 @@ export const crearReservaAdmin = async (req, res) => {
     const fechaInicioDate = new Date(fechaInicio);
     const fechaFinDate = new Date(fechaFin);
     
-    if (fechaInicioDate >= fechaFinDate) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'La fecha fin debe ser posterior a la fecha inicio' 
-      });
-    }
+    if (fechaInicioDate > fechaFinDate) {  // Quita el =
+  return res.status(400).json({ 
+    success: false,
+    error: 'La fecha fin no puede ser anterior a la fecha inicio' 
+  });
+}
 
     // Validar disponibilidad
     const existeReserva = await Reserva.findOne({
@@ -221,7 +137,10 @@ export const crearReservaAdmin = async (req, res) => {
       });
     }
 
-    // Calcular precio (ignorar cualquier precioTotal enviado desde el frontend)
+    // 🔥 CAMBIO IMPORTANTE: Usar precio dinámico en lugar del precio fijo de la cabaña
+    const precioTotal = calcularPrecioTotal(fechaInicioDate, fechaFinDate);
+    
+    // Obtener cabaña para referencia (pero NO usar su precio)
     const cabana = await Cabana.findById(cabanaId);
     if (!cabana) {
       return res.status(404).json({
@@ -230,18 +149,14 @@ export const crearReservaAdmin = async (req, res) => {
       });
     }
 
-    const diffTime = Math.abs(fechaFinDate - fechaInicioDate);
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    const precioTotal = diffDays * cabana.precio;
-
-    // Crear reserva
+    // Crear reserva con precio dinámico calculado
     const reserva = new Reserva({
       usuario: req.user.id,
       cabana: cabanaId,
       dni: huesped.dni.trim(),
       fechaInicio: fechaInicioDate,
       fechaFin: fechaFinDate,
-      precioTotal,
+      precioTotal, // 🔥 Usamos el precio dinámico calculado
       estado: 'confirmada',
       creadaPorAdmin: true,
       huesped: {
@@ -256,7 +171,7 @@ export const crearReservaAdmin = async (req, res) => {
 
     await reserva.save();
 
-    // Actualizar cabaña
+    // Actualizar cabaña con fechas reservadas
     await Cabana.findByIdAndUpdate(cabanaId, {
       $push: {
         fechasReservadas: {
@@ -267,14 +182,18 @@ export const crearReservaAdmin = async (req, res) => {
       }
     });
 
+    // Obtener desglose para mostrar en respuesta
+    const desglose = obtenerDesglosePrecios(fechaInicioDate, fechaFinDate);
+
     res.status(201).json({
       success: true,
       data: {
         ...reserva.toObject(),
+        precioDesglose: desglose.desglose, // Mostrar desglose
         cabana: {
           _id: cabana._id,
           nombre: cabana.nombre,
-          precio: cabana.precio
+          precio: cabana.precio // Este es el precio BASE, pero NO se usa para cálculo
         },
         usuario: {
           _id: req.user._id,
@@ -287,7 +206,6 @@ export const crearReservaAdmin = async (req, res) => {
   } catch (error) {
     console.error('Error en crearReservaAdmin:', error);
     
-    // Manejar errores de validación de Mongoose específicamente
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map(err => err.message);
       return res.status(400).json({
@@ -300,17 +218,233 @@ export const crearReservaAdmin = async (req, res) => {
     res.status(500).json({ 
       success: false,
       error: 'Error interno al crear reserva',
-      details: API_URL === 'development' ? error.message : undefined
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
-// Agrega este método si no existe:
-// reservaController.js
+
+// ============================================
+// 3. MODIFICAR: actualizarReserva para usar precios dinámicos
+// ============================================
+export const actualizarReserva = async (req, res) => {
+  try {
+    const { fechaInicio, fechaFin, estado, huesped, cabana } = req.body;
+    
+    // Obtener reserva actual
+    const reservaActual = await Reserva.findById(req.params.id);
+    if (!reservaActual) {
+      return res.status(404).json({ error: "Reserva no encontrada" });
+    }
+    
+    // Usar nuevas fechas o mantener las actuales
+    const nuevaFechaInicio = fechaInicio ? new Date(fechaInicio) : reservaActual.fechaInicio;
+    const nuevaFechaFin = fechaFin ? new Date(fechaFin) : reservaActual.fechaFin;
+    
+    // Validar disponibilidad si se cambia cabaña o fechas
+    const cabanaId = cabana || reservaActual.cabana.toString();
+    
+    if (cabana || fechaInicio || fechaFin) {
+      const existeOtraReserva = await Reserva.findOne({
+        cabana: cabanaId,
+        _id: { $ne: req.params.id },
+        $or: [
+          { 
+            fechaInicio: { $lt: nuevaFechaFin }, 
+            fechaFin: { $gt: nuevaFechaInicio } 
+          }
+        ]
+      });
+      
+      if (existeOtraReserva) {
+        return res.status(400).json({ 
+          success: false,
+          error: "La cabaña ya está reservada en esas fechas" 
+        });
+      }
+    }
+
+    // 🔥 CALCULAR NUEVO PRECIO si cambian las fechas
+    let nuevoPrecioTotal = reservaActual.precioTotal;
+    if (fechaInicio || fechaFin) {
+      nuevoPrecioTotal = calcularPrecioTotal(nuevaFechaInicio, nuevaFechaFin);
+    }
+
+    const reservaActualizada = await Reserva.findByIdAndUpdate(
+      req.params.id,
+      { 
+        fechaInicio: nuevaFechaInicio,
+        fechaFin: nuevaFechaFin,
+        estado, 
+        huesped, 
+        cabana: cabanaId,
+        precioTotal: nuevoPrecioTotal // 🔥 Actualizar precio si cambió
+      },
+      { new: true, runValidators: true }
+    ).populate('cabana usuario');
+
+    res.status(200).json({ 
+      success: true, 
+      data: reservaActualizada 
+    });
+  } catch (error) {
+    res.status(400).json({ 
+      success: false,
+      error: error.message 
+    });
+  }
+};
+
+// ============================================
+// 4. FUNCIONES EXISTENTES (mantener igual)
+// ============================================
+
+// Obtener todas las reservas (admin)
+export const obtenerReservas = async (req, res) => {
+  try {
+    console.log('Iniciando obtención de reservas para admin');
+    
+    if (req.user.rol !== 'admin') {
+      return res.status(403).json({ 
+        success: false,
+        error: 'Acceso no autorizado' 
+      });
+    }
+
+    const reservas = await Reserva.find({})
+      .populate({
+        path: 'usuario',
+        select: 'nombre email'
+      })
+      .populate({
+        path: 'cabana',
+        select: 'nombre precio'
+      })
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: reservas.length,
+      data: reservas
+    });
+  } catch (error) {
+    console.error('Error en obtenerReservas:', error);
+    
+    res.status(500).json({ 
+      success: false,
+      error: 'Error al obtener reservas',
+      details: process.env.NODE_ENV === 'development' ? {
+        message: error.message,
+        stack: error.stack
+      } : undefined
+    });
+  }
+};
+
+// Listar reservas del usuario
+export const listarMisReservas = async (req, res) => {
+  try {
+    const reservas = await Reserva.find({ usuario: req.user.id })
+      .populate('cabana')
+      .sort({ fechaInicio: -1 });
+    
+    res.status(200).json({
+      success: true,
+      data: reservas
+    });
+  } catch (error) {
+    res.status(400).json({ 
+      success: false,
+      error: error.message 
+    });
+  }
+};
+
+export const eliminarReserva = async (req, res) => {
+  try {
+    const reserva = await Reserva.findByIdAndDelete(req.params.id);
+    if (!reserva) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Reserva no encontrada' 
+      });
+    }
+    
+    // Limpiar fechas reservadas en la cabaña
+    await Cabana.findByIdAndUpdate(reserva.cabana, {
+      $pull: { fechasReservadas: { reservaId: reserva._id } }
+    });
+    
+    res.json({ 
+      success: true, 
+      message: 'Reserva eliminada correctamente',
+      deletedId: reserva._id 
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: 'Error al eliminar reserva',
+      details: error.message 
+    });
+  }
+};
+
+// Listar TODAS las reservas (solo admin)
+export const listarTodasReservas = async (req, res) => {
+  try {
+    if (req.user.rol !== "admin") {
+      return res.status(403).json({ 
+        success: false,
+        error: "Acceso denegado" 
+      });
+    }
+    const reservas = await Reserva.find()
+      .populate("usuario cabana")
+      .sort({ fechaInicio: -1 });
+    
+    res.status(200).json({
+      success: true,
+      data: reservas
+    });
+  } catch (error) {
+    res.status(400).json({ 
+      success: false,
+      error: error.message 
+    });
+  }
+};
+
+// Filtrar reservas por cabaña o fechas (admin/usuario)
+export const filtrarReservas = async (req, res) => {
+  try {
+    const { cabanaId, fechaInicio, fechaFin } = req.query;
+    const filtro = {};
+
+    if (cabanaId) filtro.cabana = cabanaId;
+    if (fechaInicio && fechaFin) {
+      filtro.fechaInicio = { $gte: new Date(fechaInicio) };
+      filtro.fechaFin = { $lte: new Date(fechaFin) };
+    }
+
+    const reservas = await Reserva.find(filtro)
+      .populate("cabana")
+      .sort({ fechaInicio: -1 });
+    
+    res.status(200).json({
+      success: true,
+      data: reservas
+    });
+  } catch (error) {
+    res.status(400).json({ 
+      success: false,
+      error: error.message 
+    });
+  }
+};
+
 export const obtenerReservasAdmin = async (req, res) => {
   try {
     const { page = 1, limit = 10, estado, fechaInicio, fechaFin } = req.query;
     
-    // Construir filtros
     const filter = {};
     if (estado) filter.estado = estado;
     if (fechaInicio && fechaFin) {
@@ -318,7 +452,6 @@ export const obtenerReservasAdmin = async (req, res) => {
       filter.fechaFin = { $lte: new Date(fechaFin) };
     }
 
-    // Consulta con paginación
     const [reservas, total] = await Promise.all([
       Reserva.find(filter)
         .populate('usuario', 'nombre email')
@@ -344,15 +477,13 @@ export const obtenerReservasAdmin = async (req, res) => {
     res.status(500).json({ 
       success: false,
       error: 'Error al obtener reservas',
-      details: API_URL === 'development' ? error.message : undefined
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
 
-
 export const obtenerReservaById = async (req, res) => {
   try {
-    // Validar que el ID sea un ObjectId válido
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ 
         success: false,
@@ -364,18 +495,17 @@ export const obtenerReservaById = async (req, res) => {
       .populate({
         path: 'usuario',
         select: 'nombre email',
-        options: { lean: true } // Usar lean para objetos simples
+        options: { lean: true }
       })
       .populate({
         path: 'cabana',
         select: 'nombre precio imagenes',
         options: { 
           lean: true,
-          // Proteger contra campos virtuales problemáticos
           virtuals: false 
         }
       })
-      .lean(); // Convertir a objeto simple
+      .lean();
     
     if (!reserva) {
       return res.status(404).json({ 
@@ -384,17 +514,20 @@ export const obtenerReservaById = async (req, res) => {
       });
     }
     
-    // Formatear fechas manualmente
+    // Agregar desglose de precios si existe
+    const fechaInicio = new Date(reserva.fechaInicio);
+    const fechaFin = new Date(reserva.fechaFin);
+    const desglose = obtenerDesglosePrecios(fechaInicio, fechaFin);
+    
     const reservaFormateada = {
       ...reserva,
       fechaInicio: reserva.fechaInicio?.toISOString().split('T')[0] || '',
       fechaFin: reserva.fechaFin?.toISOString().split('T')[0] || '',
-      // Asegurar que cabana tenga estructura válida
+      precioDesglose: desglose.desglose, // 🔥 Mostrar desglose
       cabana: reserva.cabana ? {
         _id: reserva.cabana._id,
         nombre: reserva.cabana.nombre,
         precio: reserva.cabana.precio,
-        // Manejar imágenes de forma segura
         imagenes: Array.isArray(reserva.cabana.imagenes) ? 
           reserva.cabana.imagenes.map(img => ({
             _id: img._id,
@@ -412,11 +545,7 @@ export const obtenerReservaById = async (req, res) => {
     res.status(500).json({ 
       success: false,
       error: 'Error al obtener reserva',
-      // Solo mostrar detalles en desarrollo
-      details: API_URL=== 'development' ? {
-        message: error.message,
-        stack: error.stack
-      } : undefined
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -425,7 +554,6 @@ export const getFechasOcupadas = async (req, res) => {
   try {
     const { cabanaId, startDate, endDate } = req.query;
 
-    // Validación básica de parámetros
     if (cabanaId && !mongoose.Types.ObjectId.isValid(cabanaId)) {
       return res.status(400).json({ 
         success: false,
@@ -433,7 +561,7 @@ export const getFechasOcupadas = async (req, res) => {
       });
     }
 
-    const query = { estado: { $ne: 'cancelada' } }; // Excluir reservas canceladas
+    const query = { estado: { $ne: 'cancelada' } };
     
     if (cabanaId) query.cabana = cabanaId;
     
@@ -457,18 +585,20 @@ export const getFechasOcupadas = async (req, res) => {
     }
 
     const reservas = await Reserva.find(query)
-      .select('fechaInicio fechaFin')
+      .select('fechaInicio fechaFin cabana')
+      .populate('cabana', 'nombre')
       .lean();
 
-    // Formatear respuesta para el frontend
-    const fechasOcupadas = reservas.flatMap(reserva => [
-      reserva.fechaInicio.toISOString().split('T')[0],
-      reserva.fechaFin.toISOString().split('T')[0]
-    ]);
+    // Formatear respuesta
+    const fechasOcupadas = reservas.map(reserva => ({
+      fechaInicio: reserva.fechaInicio.toISOString().split('T')[0],
+      fechaFin: reserva.fechaFin.toISOString().split('T')[0],
+      cabana: reserva.cabana?.nombre || 'Desconocida'
+    }));
 
     res.status(200).json({
       success: true,
-      data: [...new Set(fechasOcupadas)] // Eliminar duplicados
+      data: fechasOcupadas
     });
 
   } catch (error) {
@@ -480,4 +610,3 @@ export const getFechasOcupadas = async (req, res) => {
     });
   }
 };
-
