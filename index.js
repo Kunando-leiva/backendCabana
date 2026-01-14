@@ -31,7 +31,8 @@ const server = http.createServer(app);
 const allowedOrigins = [
   'http://localhost:3000',
   'https://cabanafront.vercel.app',
-  'https://backendcabana.onrender.com'
+  'https://backendcabana.onrender.com',
+  'https://complejolosalerces-git-primeraramafront-kunandoleivas-projects.vercel.app',
 ];
 
 const corsOptions = {

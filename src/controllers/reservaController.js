@@ -5,15 +5,17 @@ import mongoose from 'mongoose';
 import { 
   calcularPrecioTotal, 
   obtenerDesglosePrecios,
-  crearFechaArgentina
+  crearFechaArgentina,
+  generarResumenPrecio
 } from '../utils/precioCabana.js';
 
 // ============================================
 // 1. NUEVA FUNCIÓN: CALCULAR PRECIO RESERVA
 // ============================================
+// En calcularPrecioReserva, usa la nueva función:
 export const calcularPrecioReserva = async (req, res) => {
   try {
-    const { fechaInicio, fechaFin } = req.body;
+    const { fechaInicio, fechaFin, cabanaId } = req.body; // Agregar cabanaId si es necesario
     
     if (!fechaInicio || !fechaFin) {
       return res.status(400).json({ 
@@ -22,41 +24,30 @@ export const calcularPrecioReserva = async (req, res) => {
       });
     }
     
-    // Usar la función específica para Argentina
     const fechaInicioDate = crearFechaArgentina(fechaInicio);
     const fechaFinDate = crearFechaArgentina(fechaFin);
     
-    // MODIFICACIÓN: Permitir mismo día (reserva de 1 día)
-    if (fechaInicioDate > fechaFinDate) {  // Cambiar >= por >
+    // Validar que haya al menos 1 noche
+    if (fechaInicioDate >= fechaFinDate) {
       return res.status(400).json({ 
         success: false,
-        error: 'La fecha fin no puede ser anterior a la fecha inicio' 
+        error: 'La fecha de salida debe ser posterior a la fecha de entrada' 
       });
     }
     
-    // Calcular precio dinámico
-    const precioTotal = calcularPrecioTotal(fechaInicioDate, fechaFinDate);
-    const desglose = obtenerDesglosePrecios(fechaInicioDate, fechaFinDate);
-    
-    // Formatear para mostrar en pesos argentinos
-    const formatoArgentino = new Intl.NumberFormat('es-AR', {
-      style: 'currency',
-      currency: 'ARS',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    });
+    // Usar la nueva función para generar resumen
+    const resumen = generarResumenPrecio(fechaInicioDate, fechaFinDate);
     
     res.status(200).json({
       success: true,
-      precioTotal,
-      precioTotalFormateado: formatoArgentino.format(precioTotal),
-      desglose: desglose.desglose.map(dia => ({
-        ...dia,
-        precioFormateado: formatoArgentino.format(dia.precio)
-      })),
-      totalDias: desglose.desglose.length,
-      mensaje: `Precio calculado para ${desglose.desglose.length} día${desglose.desglose.length !== 1 ? 's' : ''}`,
-      moneda: 'ARS (Pesos Argentinos)'
+      precioTotal: resumen.precioTotal,
+      precioTotalFormateado: resumen.precioTotalFormateado,
+      desglose: resumen.desgloseCompleto,
+      totalNoches: resumen.totalNoches,
+      cuentaPorTipo: resumen.desglosePorTipo,
+      mensaje: `Precio para ${resumen.totalNoches} noche${resumen.totalNoches !== 1 ? 's' : ''} de alojamiento`,
+      moneda: 'ARS (Pesos Argentinos)',
+      detalles: `Check-in: ${resumen.desgloseCompleto[0]?.fecha} | Check-out: ${fechaFin}`
     });
     
   } catch (error) {
