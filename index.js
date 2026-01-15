@@ -37,6 +37,7 @@ const corsOptions = {
     // En producción, solo orígenes específicos
     const allowedOrigins = [
       'https://cabanafront.vercel.app',
+      'https://complejolosalerces-git-primeraramafront-kunandoleivas-projects.vercel.app',
       'https://complejolosalerces.vercel.app'
     ];
     
