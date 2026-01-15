@@ -9,12 +9,8 @@ import imageRoutes from './src/routes/imageRoutes.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
-import cron from 'node-cron';
-import http from 'http'; // Añadir importación de http
-import { webSocketServer } from './websocket.js'; // Cambiado a webSocketServer
-import { API_URL } from './config/config.js';
-
-
+import http from 'http';
+import mongoose from 'mongoose';
 
 // Configuración de entorno y paths
 dotenv.config();
@@ -25,155 +21,194 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const server = http.createServer(app);
 
-
-
-// Configuración CORS mejorada
-const allowedOrigins = [
-  'http://localhost:3000',
-  'https://cabanafront.vercel.app',
-  'https://backendcabana.onrender.com',
-  'https://complejolosalerces-git-primeraramafront-kunandoleivas-projects.vercel.app',
-];
-
-const corsOptions = {
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    return callback(new Error(`Origen ${origin} no permitido`), false);
-  },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-token'],
-  credentials: true,
-  optionsSuccessStatus: 204
-};
-
-
-// Middlewares
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // Habilitar preflight para todas las rutas
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
 // Conexión a la base de datos
 connectDB(); 
 
-// Configurar upgrade para WebSocket
-server.on('upgrade', (request, socket, head) => {
-  webSocketServer.handleUpgrade(request, socket, head, (ws) => {
-    webSocketServer.emit('connection', ws, request);
-  });
-});
-
-
-
-const setupImageBackups = () => {
-  const backupDir = path.join(__dirname, 'backups');
-  if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
-
-  // Programar backup diario a las 3 AM
-  cron.schedule('0 3 * * *', async () => { 
-    console.log('⏰ Iniciando backup automático de imágenes...');
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupFile = path.join(backupDir, `images-backup-${timestamp}.json`);
-
-    const session = await mongoose.startSession();
-    try {
-      const [files, chunks] = await Promise.all([
-        mongoose.connection.db.collection('images.files').find({}).toArray(),
-        mongoose.connection.db.collection('images.chunks').find({}).toArray()
-      ]);
-
-      fs.writeFileSync(backupFile, JSON.stringify({ files, chunks }, null, 2));
-      console.log(`✅ Backup guardado: ${backupFile.replace(__dirname, '')}`);
-
-      // Limpiar backups antiguos (>7 días)
-      fs.readdirSync(backupDir).forEach(file => {
-        const filePath = path.join(backupDir, file);
-        const stat = fs.statSync(filePath);
-        if (stat.mtime < Date.now() - 7 * 24 * 60 * 60 * 1000) {
-          fs.unlinkSync(filePath);
-          console.log(`🗑️ Eliminado backup antiguo: ${file}`);
-        }
-      });
-    } catch (error) {
-      console.error('❌ Error en backup:', error.message);
-    } finally {
-      session.endSession();
+// ============================================
+// 1. CONFIGURACIÓN CORS SIMPLIFICADA
+// ============================================
+const corsOptions = {
+  origin: function (origin, callback) {
+    // En desarrollo, permitir cualquier origen
+    if (process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
     }
-  });
+    
+    // En producción, solo orígenes específicos
+    const allowedOrigins = [
+      'https://cabanafront.vercel.app',
+      'https://complejolosalerces.vercel.app'
+    ];
+    
+    // Permitir peticiones sin origen (como desde Postman)
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    
+    console.log(`❌ Origen bloqueado: ${origin}`);
+    return callback(new Error('Origen no permitido por CORS'), false);
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'Origin',
+    'X-Requested-With',
+    'Accept'
+  ],
+  exposedHeaders: [],
+  credentials: true,
+  optionsSuccessStatus: 200,
+  maxAge: 600 // 10 minutos para preflight cache
 };
 
-// Iniciar el servicio de backups
-if (API_URL === 'production') {
-  setupImageBackups();
-}
+// Aplicar CORS - SOLO UNA VEZ
+app.use(cors(corsOptions));
 
-// =============================================
-// 2. RUTA MANUAL PARA BACKUP (OPCIONAL)
-// =============================================
-app.get('/api/admin/backup-images', (req, res) => {
-  if (req.user?.rol !== 'admin') {
-    return res.status(403).json({ error: 'Acceso denegado' });
-  }
-  
-  setupImageBackups(); // Ejecuta inmediatamente
-  res.json({ message: 'Backup iniciado manualmente' });
-});
+// ============================================
+// 2. MIDDLEWARES BÁSICOS
+// ============================================
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Crear directorio de uploads si no existe
+// ============================================
+// 3. SERVIR ARCHIVOS ESTÁTICOS
+// ============================================
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
-app.use('/uploads', express.static(uploadDir)); // Sirve los archivos estáticos
-app.use('/default-cabana.jpg', express.static(path.join(__dirname, 'public/default-cabana.jpg')));
 
-// Rutas
+// Servir archivos estáticos
+app.use('/uploads', express.static(uploadDir));
+
+// Crear ruta para imagen por defecto si no existe el archivo
+app.use('/default-cabana.jpg', (req, res) => {
+  const defaultImagePath = path.join(__dirname, 'public/default-cabana.jpg');
+  if (fs.existsSync(defaultImagePath)) {
+    res.sendFile(defaultImagePath);
+  } else {
+    // Crear imagen por defecto simple si no existe
+    res.set('Content-Type', 'image/svg+xml');
+    res.send(`
+      <svg width="400" height="300" xmlns="http://www.w3.org/2000/svg">
+        <rect width="100%" height="100%" fill="#f0f0f0"/>
+        <rect x="50" y="100" width="300" height="150" fill="#8B4513"/>
+        <rect x="150" y="70" width="100" height="30" fill="#A0522D"/>
+        <rect x="180" y="180" width="40" height="70" fill="#696969"/>
+        <circle cx="120" cy="220" r="15" fill="#DAA520"/>
+        <circle cx="280" cy="220" r="15" fill="#DAA520"/>
+        <text x="200" y="240" text-anchor="middle" font-family="Arial" font-size="14" fill="#333">Cabaña</text>
+      </svg>
+    `);
+  }
+});
+
+// ============================================
+// 4. RUTAS BÁSICAS
+// ============================================
 app.get('/', (req, res) => {
-  res.send('API del Complejo de Cabañas');
-});
-
-app.use('/api/cabanas', cabanaRoutes);
-app.use('/api/auth', authRoutes);
-app.use('/api/reservas', reservaRoutes);
-app.use('/api/images', imageRoutes); // Reemplaza uploadRoutes por imageRoutes
-app.use('/api/', imageRoutes); // Reemplaza uploadRoutes por imageRoutes
-
-// Configuración para servir archivos estáticos
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// Middleware para verificar acceso a archivos
-app.use('/uploads', (req, res, next) => {
-  // Añadir lógica de autenticación si es necesario
-  next();
-});
-
-// Manejo de errores global
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ 
-    success: false,
-    error: 'Error interno del servidor',
-    details: API_URL === 'development' ? err.message : undefined
+  res.json({ 
+    message: 'API del Complejo de Cabañas',
+    version: '1.0.0',
+    status: 'online',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
   });
 });
 
-// Redirección HTTPS en producción
-app.use((req, res, next) => {
-  if (API_URL === 'production' && req.headers['x-forwarded-proto'] !== 'https') {
-    return res.redirect(`https://${req.headers.host}${req.url}`);
-  }
-  next();
+app.get('/health', (req, res) => {
+  const dbStatus = mongoose.connection.readyState;
+  const dbStatusText = {
+    0: 'disconnected',
+    1: 'connected',
+    2: 'connecting',
+    3: 'disconnecting'
+  }[dbStatus] || 'unknown';
+  
+  res.json({
+    status: dbStatus === 1 ? 'healthy' : 'unhealthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    database: dbStatusText,
+    memory: process.memoryUsage()
+  });
 });
 
-// Iniciar servidor
-const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(`Servidor HTTP y WebSocket ejecutándose en puerto ${PORT}`);
-  console.log(`Modo: ${API_URL || 'development'}`);
-  console.log(`WebSocket disponible en ws://localhost:${PORT}`);
-  console.log(`URL de uploads: ${API_URL}/uploads`);
+// ============================================
+// 5. RUTAS DE API
+// ============================================
+app.use('/api/cabanas', cabanaRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/reservas', reservaRoutes);
+app.use('/api/images', imageRoutes);
 
+// ============================================
+// 6. MANEJO DE ERRORES
+// ============================================
+// Ruta no encontrada
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    error: 'Ruta no encontrada',
+    path: req.url,
+    method: req.method
+  });
+});
+
+// Error global
+app.use((err, req, res, next) => {
+  console.error('🔥 Error global:', {
+    message: err.message,
+    url: req.url,
+    method: req.method
+  });
+  
+  // Error CORS específico
+  if (err.message.includes('CORS') || err.message.includes('Origen')) {
+    return res.status(403).json({ 
+      success: false,
+      error: 'Acceso CORS denegado',
+      allowedOrigins: process.env.NODE_ENV === 'production' 
+        ? ['https://cabanafront.vercel.app', 'https://complejolosalerces.vercel.app']
+        : ['* (desarrollo)'],
+      yourOrigin: req.headers.origin,
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+  
+  res.status(err.status || 500).json({ 
+    success: false,
+    error: 'Error interno del servidor',
+    details: process.env.NODE_ENV === 'development' ? {
+      message: err.message,
+      stack: err.stack
+    } : undefined
+  });
+});
+
+// ============================================
+// 7. INICIAR SERVIDOR
+// ============================================
+const PORT = process.env.PORT || 5000;
+
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`=========================================`);
+  console.log(`🚀 Servidor ejecutándose en puerto ${PORT}`);
+  console.log(`🌍 Modo: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔗 URL: http://localhost:${PORT}`);
+  console.log(`🌐 CORS: ${process.env.NODE_ENV === 'production' ? 'Restringido' : 'Permitir todo'}`);
+  console.log(`✅ Health check: http://localhost:${PORT}/health`);
+  console.log(`=========================================`);
+  
+  // Mostrar rutas disponibles
+  console.log('\n📌 Rutas disponibles:');
+  console.log('  GET  /                    → Estado API');
+  console.log('  GET  /health              → Health check');
+  console.log('  GET  /api/cabanas         → Listar cabañas');
+  console.log('  GET  /api/reservas/ocupadas → Fechas ocupadas');
+  console.log('  POST /api/reservas/calcular-precio → Calcular precio');
+  console.log('  GET  /uploads/:filename   → Archivos subidos');
+  console.log('  GET  /default-cabana.jpg  → Imagen por defecto');
+  console.log(`=========================================`);
 });
