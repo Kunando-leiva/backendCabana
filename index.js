@@ -36,6 +36,7 @@ const corsOptions = {
     
     // En producción, solo orígenes específicos
     const allowedOrigins = [
+      'http://localhost:3000',  // Desarrollo local
       'https://cabanafront.vercel.app',
       'https://complejolosalerces-git-primeraramafront-kunandoleivas-projects.vercel.app',
       'https://complejolosalerces.vercel.app'
@@ -46,9 +47,11 @@ const corsOptions = {
       return callback(null, true);
     }
     
-    console.log(`❌ Origen bloqueado: ${origin}`);
+    
     return callback(new Error('Origen no permitido por CORS'), false);
+    
   },
+  
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: [
     'Content-Type',
@@ -61,6 +64,7 @@ const corsOptions = {
   credentials: true,
   optionsSuccessStatus: 200,
   maxAge: 600 // 10 minutos para preflight cache
+  
 };
 
 // Aplicar CORS - SOLO UNA VEZ
