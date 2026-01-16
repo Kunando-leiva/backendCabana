@@ -13,12 +13,9 @@ import {
 // 1. NUEVA FUNCIÓN: CALCULAR PRECIO RESERVA
 // ============================================
 // En calcularPrecioReserva, usa la nueva función:
-// En src/controllers/reservaController.js - VERSIÓN CORREGIDA
 export const calcularPrecioReserva = async (req, res) => {
   try {
-    const { fechaInicio, fechaFin, cabanaId } = req.body;
-
-    console.log('📊 Calculando precio para:', { fechaInicio, fechaFin, cabanaId });
+    const { fechaInicio, fechaFin, cabanaId } = req.body; // Agregar cabanaId si es necesario
     
     if (!fechaInicio || !fechaFin) {
       return res.status(400).json({ 
@@ -27,16 +24,8 @@ export const calcularPrecioReserva = async (req, res) => {
       });
     }
     
-    // Validar formato de fechas
-    const fechaInicioDate = new Date(fechaInicio);
-    const fechaFinDate = new Date(fechaFin);
-    
-    if (isNaN(fechaInicioDate.getTime()) || isNaN(fechaFinDate.getTime())) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'Formato de fecha inválido'
-      });
-    }
+    const fechaInicioDate = crearFechaArgentina(fechaInicio);
+    const fechaFinDate = crearFechaArgentina(fechaFin);
     
     // Validar que haya al menos 1 noche
     if (fechaInicioDate >= fechaFinDate) {
@@ -46,173 +35,27 @@ export const calcularPrecioReserva = async (req, res) => {
       });
     }
     
-    // 🔥 IMPORTANTE: Importar las funciones de precioCabana.js
-    // Si no están disponibles, definirlas aquí
+    // Usar la nueva función para generar resumen
+    const resumen = generarResumenPrecio(fechaInicioDate, fechaFinDate);
     
-    // Función para crear fecha Argentina (UTC-3)
-    const crearFechaArgentina = (fechaString) => {
-      if (fechaString instanceof Date) {
-        return fechaString;
-      }
-      
-      if (typeof fechaString === 'string') {
-        if (!fechaString.includes('T')) {
-          return new Date(fechaString + 'T03:00:00-03:00');
-        }
-      }
-      
-      return new Date(fechaString);
-    };
-
-    // Feriados Argentina 2025 (actualizados)
-    const feriadosArgentina2026 = [
-  "2026-01-01", // Año Nuevo
-  "2026-02-16", // Carnaval
-  "2026-02-17", // Carnaval
-  "2026-03-24", // Día Nacional de la Memoria por la Verdad y la Justicia
-  "2026-04-02", // Día del Veterano y de los Caídos en la Guerra de Malvinas
-  "2026-04-03", // Viernes Santo
-  "2026-05-01", // Día del Trabajador
-  "2026-05-25", // Día de la Revolución de Mayo
-  "2026-06-17", // Paso a la Inmortalidad del Gral. Martín Miguel de Güemes
-  "2026-06-20", // Día de la Bandera
-  "2026-07-09", // Día de la Independencia
-  "2026-08-17", // Paso a la Inmortalidad del Gral. José de San Martín
-  "2026-10-12", // Día del Respeto a la Diversidad Cultural
-  "2026-11-16", // Día de la Soberanía Nacional (trasladable)
-  "2026-12-08", // Inmaculada Concepción de María
-  "2026-12-25", // Navidad
-];
-
-    // Función para verificar si es feriado
-    const esFeriado = (fecha) => {
-      const fechaArg = crearFechaArgentina(fecha);
-      const fechaString = fechaArg.toISOString().split('T')[0];
-      return feriadosArgentina2025.includes(fechaString);
-    };
-
-    // Obtener tipo de día
-    const obtenerTipoDia = (fecha) => {
-      const fechaArg = crearFechaArgentina(fecha);
-      
-      if (esFeriado(fechaArg)) {
-        return 'feriado';
-      }
-      
-      const diaSemana = fechaArg.getDay();
-      
-      // Solo Sábado y Domingo son fin de semana
-      if (diaSemana === 0 || diaSemana === 6) {
-        return 'fin de semana';
-      }
-      
-      return 'semana';
-    };
-
-    // Calcular precio por NOCHE
-    const calcularPrecioPorNoche = (fecha) => {
-      const tipo = obtenerTipoDia(fecha);
-      
-      switch (tipo) {
-        case 'feriado':
-          return 200000; // Feriados
-        case 'fin de semana':
-          return 180000; // Sábado y Domingo
-        case 'semana':
-          return 150000; // Lunes a Viernes
-        default:
-          return 150000;
-      }
-    };
-
-    // Calcular precio total
-    const calcularPrecioTotal = (inicio, fin) => {
-      const startDate = crearFechaArgentina(inicio);
-      const endDate = crearFechaArgentina(fin);
-      
-      if (startDate >= endDate) return 0;
-      
-      const diffTiempo = endDate - startDate;
-      const noches = Math.floor(diffTiempo / (1000 * 60 * 60 * 24));
-      
-      if (noches <= 0) return 0;
-      
-      let precioTotal = 0;
-      const desglose = [];
-      const fechaActual = new Date(startDate);
-      const nombresDias = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-      
-      for (let i = 0; i < noches; i++) {
-        const precioNoche = calcularPrecioPorNoche(fechaActual);
-        precioTotal += precioNoche;
-        
-        const diaSemana = fechaActual.getDay();
-        const tipo = obtenerTipoDia(fechaActual);
-        
-        desglose.push({
-          fecha: fechaActual.toISOString().split('T')[0],
-          diaSemana: diaSemana,
-          diaNombre: nombresDias[diaSemana],
-          precio: precioNoche,
-          tipo: tipo,
-          nocheNumero: i + 1
-        });
-        
-        fechaActual.setDate(fechaActual.getDate() + 1);
-      }
-      
-      return { precioTotal, desglose, totalNoches: noches };
-    };
-
-    // Contar tipos de noches
-    const contarNochesPorTipo = (desglose) => {
-      return {
-        semana: desglose.filter(d => d.tipo === 'semana').length,
-        finDeSemana: desglose.filter(d => d.tipo === 'fin de semana').length,
-        feriado: desglose.filter(d => d.tipo === 'feriado').length
-      };
-    };
-
-    // Formatear precio argentino
-    const formatoArgentino = new Intl.NumberFormat('es-AR', {
-      style: 'currency',
-      currency: 'ARS',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    });
-
-    // Calcular precio con las funciones anteriores
-    const { precioTotal, desglose, totalNoches } = calcularPrecioTotal(fechaInicioDate, fechaFinDate);
-    const conteoPorTipo = contarNochesPorTipo(desglose);
-    
-    // Respuesta estructurada
     res.status(200).json({
       success: true,
-      precioTotal: precioTotal,
-      precioTotalFormateado: formatoArgentino.format(precioTotal),
-      desglose: desglose,
-      totalNoches: totalNoches,
-      cuentaPorTipo: conteoPorTipo,
-      mensaje: `Precio para ${totalNoches} noche${totalNoches !== 1 ? 's' : ''} de alojamiento`,
+      precioTotal: resumen.precioTotal,
+      precioTotalFormateado: resumen.precioTotalFormateado,
+      desglose: resumen.desgloseCompleto,
+      totalNoches: resumen.totalNoches,
+      cuentaPorTipo: resumen.desglosePorTipo,
+      mensaje: `Precio para ${resumen.totalNoches} noche${resumen.totalNoches !== 1 ? 's' : ''} de alojamiento`,
       moneda: 'ARS (Pesos Argentinos)',
-      checkIn: fechaInicioDate.toISOString().split('T')[0],
-      checkOut: fechaFinDate.toISOString().split('T')[0]
+      detalles: `Check-in: ${resumen.desgloseCompleto[0]?.fecha} | Check-out: ${fechaFin}`
     });
     
   } catch (error) {
-    console.error('🔥 Error en calcularPrecioReserva:', {
-      message: error.message,
-      stack: error.stack,
-      body: req.body
-    });
-    
+    console.error('Error calculando precio:', error);
     res.status(500).json({
       success: false,
       error: 'Error al calcular el precio',
-      details: process.env.NODE_ENV === 'development' ? {
-        message: error.message,
-        stack: error.stack
-      } : undefined
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
