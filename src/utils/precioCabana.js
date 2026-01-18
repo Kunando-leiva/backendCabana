@@ -1,6 +1,6 @@
 // src/utils/precioCabana.js - VERSIÓN COMPLETA
 
-const feriadosArgentina2026 = [
+const feriadosArgentina2025 = [
   "2026-01-01", // Año Nuevo
   "2026-02-16", // Carnaval
   "2026-02-17", // Carnaval
