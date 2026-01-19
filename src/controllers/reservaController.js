@@ -601,3 +601,140 @@ export const getFechasOcupadas = async (req, res) => {
     });
   }
 };
+
+// ============================================
+// NUEVO ENDPOINT: OBTENER CABAÑAS DISPONIBLES
+// ============================================
+export const getCabanasDisponibles = async (req, res) => {
+  try {
+    const { fechaInicio, fechaFin } = req.query;
+
+    // Validar que se proporcionen ambas fechas
+    if (!fechaInicio || !fechaFin) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requieren fechaInicio y fechaFin en formato YYYY-MM-DD'
+      });
+    }
+
+    // Validar formato de fechas
+    const fechaInicioDate = new Date(fechaInicio);
+    const fechaFinDate = new Date(fechaFin);
+    
+    if (isNaN(fechaInicioDate.getTime()) || isNaN(fechaFinDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        error: 'Formato de fecha inválido. Use YYYY-MM-DD'
+      });
+    }
+
+    if (fechaInicioDate >= fechaFinDate) {
+      return res.status(400).json({
+        success: false,
+        error: 'La fecha de fin debe ser posterior a la fecha de inicio'
+      });
+    }
+
+    // 1. Obtener TODAS las cabañas
+    const todasLasCabanas = await Cabana.find({})
+      .select('nombre capacidad precio imagenes descripcion comodidades imagenPrincipal')
+      .lean();
+
+    // 2. Obtener reservas ACTIVAS en el rango de fechas
+    const reservasEnRango = await Reserva.find({
+      estado: { $ne: 'cancelada' },
+      $or: [
+        { 
+          fechaInicio: { $lt: fechaFinDate }, 
+          fechaFin: { $gt: fechaInicioDate } 
+        }
+      ]
+    }).select('cabana fechaInicio fechaFin').lean();
+
+    // 3. Crear un Set de IDs de cabañas OCUPADAS
+    const cabanasOcupadasIds = new Set();
+    reservasEnRango.forEach(reserva => {
+      cabanasOcupadasIds.add(reserva.cabana.toString());
+    });
+
+    // 4. Filtrar las cabañas DISPONIBLES (las que NO están en el Set de ocupadas)
+    const cabanasDisponibles = todasLasCabanas.filter(cabana => 
+      !cabanasOcupadasIds.has(cabana._id.toString())
+    );
+
+    // 5. Formatear la respuesta con URLs de imágenes completas
+    const API_URL = process.env.API_URL || 'http://localhost:5000';
+    
+    const cabanasFormateadas = cabanasDisponibles.map(cabana => {
+      // Obtener imagen principal
+      let imagenPrincipal = `${API_URL}/default-cabana.jpg`;
+      
+      if (cabana.imagenPrincipal) {
+        if (typeof cabana.imagenPrincipal === 'string') {
+          if (cabana.imagenPrincipal.startsWith('http')) {
+            imagenPrincipal = cabana.imagenPrincipal;
+          } else if (cabana.imagenPrincipal.startsWith('/')) {
+            imagenPrincipal = `${API_URL}${cabana.imagenPrincipal}`;
+          } else {
+            imagenPrincipal = `${API_URL}/${cabana.imagenPrincipal}`;
+          }
+        } else if (cabana.imagenPrincipal.url) {
+          if (cabana.imagenPrincipal.url.startsWith('http')) {
+            imagenPrincipal = cabana.imagenPrincipal.url;
+          } else if (cabana.imagenPrincipal.url.startsWith('/')) {
+            imagenPrincipal = `${API_URL}${cabana.imagenPrincipal.url}`;
+          } else {
+            imagenPrincipal = `${API_URL}/${cabana.imagenPrincipal.url}`;
+          }
+        }
+      } else if (cabana.imagenes && cabana.imagenes.length > 0) {
+        // Usar primera imagen como fallback
+        const primeraImagen = cabana.imagenes[0];
+        if (typeof primeraImagen === 'string') {
+          if (primeraImagen.startsWith('http')) {
+            imagenPrincipal = primeraImagen;
+          } else {
+            imagenPrincipal = `${API_URL}/${primeraImagen}`;
+          }
+        } else if (primeraImagen.url) {
+          if (primeraImagen.url.startsWith('http')) {
+            imagenPrincipal = primeraImagen.url;
+          } else {
+            imagenPrincipal = `${API_URL}${primeraImagen.url}`;
+          }
+        }
+      }
+
+      return {
+        _id: cabana._id,
+        nombre: cabana.nombre,
+        capacidad: cabana.capacidad,
+        precio: cabana.precio,
+        descripcion: cabana.descripcion,
+        comodidades: cabana.comodidades || [],
+        imagenPrincipal: imagenPrincipal,
+        imagenes: cabana.imagenes || [],
+        disponible: true
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      data: cabanasFormateadas,
+      total: cabanasFormateadas.length,
+      filtros: {
+        fechaInicio: fechaInicioDate.toISOString().split('T')[0],
+        fechaFin: fechaFinDate.toISOString().split('T')[0],
+        noches: Math.floor((fechaFinDate - fechaInicioDate) / (1000 * 60 * 60 * 24))
+      }
+    });
+
+  } catch (error) {
+    console.error('Error en getCabanasDisponibles:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al buscar cabañas disponibles',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};

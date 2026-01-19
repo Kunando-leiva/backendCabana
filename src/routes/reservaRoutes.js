@@ -8,7 +8,8 @@ import {
   obtenerReservaById, 
   obtenerReservasAdmin, 
   getFechasOcupadas,
-  calcularPrecioReserva  // <-- NUEVA IMPORTACIÓN
+  calcularPrecioReserva,
+  getCabanasDisponibles
 } from '../controllers/reservaController.js';
 import { auth, isAdmin } from '../middlewares/auth.js';
 import Reserva from '../models/Reserva.js';
@@ -41,6 +42,10 @@ router.get('/admin/:id', auth, isAdmin, async (req, res, next) => {
     next(error);
   }
 });
+
+router.get('/disponibles', getCabanasDisponibles);
+
+
 
 // Endpoint para fechas ocupadas
 router.get('/ocupadas', getFechasOcupadas);
