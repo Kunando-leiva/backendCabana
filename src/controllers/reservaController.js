@@ -714,8 +714,12 @@ export const getCabanasDisponibles = async (req, res) => {
       });
     }
 
+    // 🔥 NORMALIZAR FECHAS A MEDIANOCHE
     const fechaInicioDate = new Date(fechaInicio);
+    fechaInicioDate.setHours(0, 0, 0, 0);
+    
     const fechaFinDate = new Date(fechaFin);
+    fechaFinDate.setHours(0, 0, 0, 0);
     
     if (isNaN(fechaInicioDate.getTime()) || isNaN(fechaFinDate.getTime())) {
       return res.status(400).json({
@@ -737,28 +741,76 @@ export const getCabanasDisponibles = async (req, res) => {
 
     console.log(`🏠 ${todasLasCabanas.length} cabañas en total`);
 
+    // 🔥 CONSULTA CORREGIDA: Solo conflictos REALES (no incluye check-out)
+    // Reserva: check-in el A, check-out el B
+    // Nueva reserva: check-in el X, check-out el Y
+    // Conflicto si: A < Y Y B > X
+    // Pero queremos: check-out (B) NO bloquea check-in (X) en el mismo día
+    // Entonces: Conflicto si: A < Y Y B > X
+    
     const reservasEnRango = await Reserva.find({
       estado: { $ne: 'cancelada' },
       $or: [
         { 
-          fechaInicio: { $lt: fechaFinDate }, 
-          fechaFin: { $gt: fechaInicioDate } 
+          // Caso 1: La reserva existente comienza DENTRO de la nueva reserva
+          fechaInicio: { 
+            $gte: fechaInicioDate, 
+            $lt: fechaFinDate  // No incluye fechaFinDate (día de check-out)
+          }
+        },
+        { 
+          // Caso 2: La reserva existente termina DENTRO de la nueva reserva
+          fechaFin: { 
+            $gt: fechaInicioDate,  // No incluye fechaInicioDate
+            $lte: fechaFinDate 
+          }
+        },
+        { 
+          // Caso 3: La reserva existente envuelve la nueva reserva
+          fechaInicio: { $lt: fechaInicioDate },
+          fechaFin: { $gt: fechaFinDate }
         }
       ]
     }).select('cabana fechaInicio fechaFin').lean();
 
     console.log(`📅 ${reservasEnRango.length} reservas activas en el rango`);
+    
+    // 🔥 LOGGING DETALLADO para debug
+    reservasEnRango.forEach(reserva => {
+      console.log(`🔍 Reserva encontrada:`, {
+        cabana: reserva.cabana,
+        fechaInicio: new Date(reserva.fechaInicio).toISOString().split('T')[0],
+        fechaFin: new Date(reserva.fechaFin).toISOString().split('T')[0],
+        rangoSolicitado: {
+          inicio: fechaInicioDate.toISOString().split('T')[0],
+          fin: fechaFinDate.toISOString().split('T')[0]
+        }
+      });
+    });
 
     const cabanasOcupadasIds = new Set();
     reservasEnRango.forEach(reserva => {
       cabanasOcupadasIds.add(reserva.cabana.toString());
     });
 
+    console.log(`🚫 Cabañas ocupadas IDs:`, Array.from(cabanasOcupadasIds));
+
     const cabanasDisponibles = todasLasCabanas.filter(cabana => 
       !cabanasOcupadasIds.has(cabana._id.toString())
     );
 
     console.log(`✅ ${cabanasDisponibles.length} cabañas disponibles`);
+    
+    // 🔥 VERIFICACIÓN ESPECÍFICA para las dos cabañas
+    const cabanaTroncosId = '68361d2096798f108ef1827d'; // Reemplaza con ID real
+    const cabanaNormandaId = '68361c0796798f108ef18246'; // Reemplaza con ID real
+    
+    const troncosOcupada = cabanasOcupadasIds.has(cabanaTroncosId);
+    const normandaOcupada = cabanasOcupadasIds.has(cabanaNormandaId);
+    
+    console.log('🔍 Estado específico para 12-13 feb:');
+    console.log(`- Cabaña de Troncos: ${troncosOcupada ? 'OCUPADA ❌' : 'DISPONIBLE ✅'}`);
+    console.log(`- cabaña Normanda: ${normandaOcupada ? 'OCUPADA ❌' : 'DISPONIBLE ✅'}`);
 
     const API_URL = process.env.API_URL || 'http://localhost:5000';
     
@@ -821,6 +873,11 @@ export const getCabanasDisponibles = async (req, res) => {
         fechaInicio: fechaInicioDate.toISOString().split('T')[0],
         fechaFin: fechaFinDate.toISOString().split('T')[0],
         noches: Math.floor((fechaFinDate - fechaInicioDate) / (1000 * 60 * 60 * 24))
+      },
+      debug: { // 🔥 Para testing
+        totalCabanas: todasLasCabanas.length,
+        cabanasOcupadas: Array.from(cabanasOcupadasIds),
+        cabanasDisponibles: cabanasDisponibles.length
       }
     });
 
