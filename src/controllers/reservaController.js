@@ -12,10 +12,11 @@ import {
 // ============================================
 // 1. NUEVA FUNCIÓN: CALCULAR PRECIO RESERVA
 // ============================================
-// En calcularPrecioReserva, usa la nueva función:
 export const calcularPrecioReserva = async (req, res) => {
   try {
-    const { fechaInicio, fechaFin, cabanaId } = req.body; // Agregar cabanaId si es necesario
+    const { fechaInicio, fechaFin, cabanaId } = req.body;
+    
+    console.log('🔢 calcularPrecioReserva - Recibido:', { fechaInicio, fechaFin, cabanaId });
     
     if (!fechaInicio || !fechaFin) {
       return res.status(400).json({ 
@@ -35,8 +36,9 @@ export const calcularPrecioReserva = async (req, res) => {
       });
     }
     
-    // Usar la nueva función para generar resumen
     const resumen = generarResumenPrecio(fechaInicioDate, fechaFinDate);
+    
+    console.log('💰 Precio calculado para', resumen.totalNoches, 'noches:', resumen.precioTotal);
     
     res.status(200).json({
       success: true,
@@ -67,7 +69,9 @@ export const crearReservaAdmin = async (req, res) => {
   try {
     const { cabanaId, fechaInicio, fechaFin, huesped } = req.body;
 
-    // Validaciones mejoradas
+    console.log('📝 crearReservaAdmin - Iniciando reserva para cabaña:', cabanaId);
+    console.log('📅 Fechas:', { fechaInicio, fechaFin });
+
     if (!cabanaId || !fechaInicio || !fechaFin || !huesped) {
       return res.status(400).json({ 
         success: false,
@@ -75,7 +79,6 @@ export const crearReservaAdmin = async (req, res) => {
       });
     }
 
-    // Validar campos del huésped
     if (!huesped.dni || !huesped.nombre || !huesped.apellido) {
       return res.status(400).json({
         success: false,
@@ -83,7 +86,6 @@ export const crearReservaAdmin = async (req, res) => {
       });
     }
 
-    // Validar formato del DNI
     if (!/^\d+$/.test(huesped.dni)) {
       return res.status(400).json({
         success: false,
@@ -91,18 +93,21 @@ export const crearReservaAdmin = async (req, res) => {
       });
     }
 
-    // Validar fechas
     const fechaInicioDate = new Date(fechaInicio);
     const fechaFinDate = new Date(fechaFin);
     
-    if (fechaInicioDate > fechaFinDate) {  // Quita el =
-  return res.status(400).json({ 
-    success: false,
-    error: 'La fecha fin no puede ser anterior a la fecha inicio' 
-  });
-}
+    console.log('📅 Fechas parseadas:', {
+      inicio: fechaInicioDate.toISOString(),
+      fin: fechaFinDate.toISOString()
+    });
+    
+    if (fechaInicioDate > fechaFinDate) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'La fecha fin no puede ser anterior a la fecha inicio' 
+      });
+    }
 
-    // Validar disponibilidad
     const existeReserva = await Reserva.findOne({
       cabana: cabanaId,
       $or: [
@@ -115,6 +120,7 @@ export const crearReservaAdmin = async (req, res) => {
     });
 
     if (existeReserva) {
+      console.log('❌ Conflicto con reserva existente:', existeReserva._id);
       return res.status(400).json({ 
         success: false,
         error: 'La cabaña ya está reservada en esas fechas',
@@ -128,10 +134,9 @@ export const crearReservaAdmin = async (req, res) => {
       });
     }
 
-    // 🔥 CAMBIO IMPORTANTE: Usar precio dinámico en lugar del precio fijo de la cabaña
     const precioTotal = calcularPrecioTotal(fechaInicioDate, fechaFinDate);
+    console.log('💰 Precio total calculado:', precioTotal);
     
-    // Obtener cabaña para referencia (pero NO usar su precio)
     const cabana = await Cabana.findById(cabanaId);
     if (!cabana) {
       return res.status(404).json({
@@ -140,14 +145,13 @@ export const crearReservaAdmin = async (req, res) => {
       });
     }
 
-    // Crear reserva con precio dinámico calculado
     const reserva = new Reserva({
       usuario: req.user.id,
       cabana: cabanaId,
       dni: huesped.dni.trim(),
       fechaInicio: fechaInicioDate,
       fechaFin: fechaFinDate,
-      precioTotal, // 🔥 Usamos el precio dinámico calculado
+      precioTotal,
       estado: 'confirmada',
       creadaPorAdmin: true,
       huesped: {
@@ -161,8 +165,8 @@ export const crearReservaAdmin = async (req, res) => {
     });
 
     await reserva.save();
+    console.log('✅ Reserva creada ID:', reserva._id);
 
-    // Actualizar cabaña con fechas reservadas
     await Cabana.findByIdAndUpdate(cabanaId, {
       $push: {
         fechasReservadas: {
@@ -173,18 +177,17 @@ export const crearReservaAdmin = async (req, res) => {
       }
     });
 
-    // Obtener desglose para mostrar en respuesta
     const desglose = obtenerDesglosePrecios(fechaInicioDate, fechaFinDate);
 
     res.status(201).json({
       success: true,
       data: {
         ...reserva.toObject(),
-        precioDesglose: desglose.desglose, // Mostrar desglose
+        precioDesglose: desglose.desglose,
         cabana: {
           _id: cabana._id,
           nombre: cabana.nombre,
-          precio: cabana.precio // Este es el precio BASE, pero NO se usa para cálculo
+          precio: cabana.precio
         },
         usuario: {
           _id: req.user._id,
@@ -221,17 +224,16 @@ export const actualizarReserva = async (req, res) => {
   try {
     const { fechaInicio, fechaFin, estado, huesped, cabana } = req.body;
     
-    // Obtener reserva actual
+    console.log('✏️ actualizarReserva - ID:', req.params.id);
+    
     const reservaActual = await Reserva.findById(req.params.id);
     if (!reservaActual) {
       return res.status(404).json({ error: "Reserva no encontrada" });
     }
     
-    // Usar nuevas fechas o mantener las actuales
     const nuevaFechaInicio = fechaInicio ? new Date(fechaInicio) : reservaActual.fechaInicio;
     const nuevaFechaFin = fechaFin ? new Date(fechaFin) : reservaActual.fechaFin;
     
-    // Validar disponibilidad si se cambia cabaña o fechas
     const cabanaId = cabana || reservaActual.cabana.toString();
     
     if (cabana || fechaInicio || fechaFin) {
@@ -254,10 +256,10 @@ export const actualizarReserva = async (req, res) => {
       }
     }
 
-    // 🔥 CALCULAR NUEVO PRECIO si cambian las fechas
     let nuevoPrecioTotal = reservaActual.precioTotal;
     if (fechaInicio || fechaFin) {
       nuevoPrecioTotal = calcularPrecioTotal(nuevaFechaInicio, nuevaFechaFin);
+      console.log('💰 Precio actualizado:', nuevoPrecioTotal);
     }
 
     const reservaActualizada = await Reserva.findByIdAndUpdate(
@@ -268,7 +270,7 @@ export const actualizarReserva = async (req, res) => {
         estado, 
         huesped, 
         cabana: cabanaId,
-        precioTotal: nuevoPrecioTotal // 🔥 Actualizar precio si cambió
+        precioTotal: nuevoPrecioTotal
       },
       { new: true, runValidators: true }
     ).populate('cabana usuario');
@@ -278,6 +280,7 @@ export const actualizarReserva = async (req, res) => {
       data: reservaActualizada 
     });
   } catch (error) {
+    console.error('Error en actualizarReserva:', error);
     res.status(400).json({ 
       success: false,
       error: error.message 
@@ -286,13 +289,11 @@ export const actualizarReserva = async (req, res) => {
 };
 
 // ============================================
-// 4. FUNCIONES EXISTENTES (mantener igual)
+// 4. FUNCIONES EXISTENTES (con logging)
 // ============================================
-
-// Obtener todas las reservas (admin)
 export const obtenerReservas = async (req, res) => {
   try {
-    console.log('Iniciando obtención de reservas para admin');
+    console.log('📋 obtenerReservas para admin');
     
     if (req.user.rol !== 'admin') {
       return res.status(403).json({ 
@@ -312,6 +313,8 @@ export const obtenerReservas = async (req, res) => {
       })
       .sort({ createdAt: -1 });
 
+    console.log(`📊 ${reservas.length} reservas encontradas`);
+    
     res.status(200).json({
       success: true,
       count: reservas.length,
@@ -331,18 +334,22 @@ export const obtenerReservas = async (req, res) => {
   }
 };
 
-// Listar reservas del usuario
 export const listarMisReservas = async (req, res) => {
   try {
+    console.log('📋 listarMisReservas para usuario:', req.user.id);
+    
     const reservas = await Reserva.find({ usuario: req.user.id })
       .populate('cabana')
       .sort({ fechaInicio: -1 });
+    
+    console.log(`📊 ${reservas.length} reservas del usuario`);
     
     res.status(200).json({
       success: true,
       data: reservas
     });
   } catch (error) {
+    console.error('Error en listarMisReservas:', error);
     res.status(400).json({ 
       success: false,
       error: error.message 
@@ -352,6 +359,8 @@ export const listarMisReservas = async (req, res) => {
 
 export const eliminarReserva = async (req, res) => {
   try {
+    console.log('🗑️ Eliminando reserva ID:', req.params.id);
+    
     const reserva = await Reserva.findByIdAndDelete(req.params.id);
     if (!reserva) {
       return res.status(404).json({ 
@@ -360,10 +369,11 @@ export const eliminarReserva = async (req, res) => {
       });
     }
     
-    // Limpiar fechas reservadas en la cabaña
     await Cabana.findByIdAndUpdate(reserva.cabana, {
       $pull: { fechasReservadas: { reservaId: reserva._id } }
     });
+    
+    console.log('✅ Reserva eliminada correctamente');
     
     res.json({ 
       success: true, 
@@ -371,6 +381,7 @@ export const eliminarReserva = async (req, res) => {
       deletedId: reserva._id 
     });
   } catch (error) {
+    console.error('Error en eliminarReserva:', error);
     res.status(500).json({ 
       success: false, 
       error: 'Error al eliminar reserva',
@@ -379,7 +390,6 @@ export const eliminarReserva = async (req, res) => {
   }
 };
 
-// Listar TODAS las reservas (solo admin)
 export const listarTodasReservas = async (req, res) => {
   try {
     if (req.user.rol !== "admin") {
@@ -388,15 +398,21 @@ export const listarTodasReservas = async (req, res) => {
         error: "Acceso denegado" 
       });
     }
+    
+    console.log('📋 listarTodasReservas');
+    
     const reservas = await Reserva.find()
       .populate("usuario cabana")
       .sort({ fechaInicio: -1 });
+    
+    console.log(`📊 ${reservas.length} reservas totales`);
     
     res.status(200).json({
       success: true,
       data: reservas
     });
   } catch (error) {
+    console.error('Error en listarTodasReservas:', error);
     res.status(400).json({ 
       success: false,
       error: error.message 
@@ -404,11 +420,12 @@ export const listarTodasReservas = async (req, res) => {
   }
 };
 
-// Filtrar reservas por cabaña o fechas (admin/usuario)
 export const filtrarReservas = async (req, res) => {
   try {
     const { cabanaId, fechaInicio, fechaFin } = req.query;
     const filtro = {};
+
+    console.log('🔍 filtrarReservas:', { cabanaId, fechaInicio, fechaFin });
 
     if (cabanaId) filtro.cabana = cabanaId;
     if (fechaInicio && fechaFin) {
@@ -420,11 +437,14 @@ export const filtrarReservas = async (req, res) => {
       .populate("cabana")
       .sort({ fechaInicio: -1 });
     
+    console.log(`📊 ${reservas.length} reservas encontradas con filtro`);
+    
     res.status(200).json({
       success: true,
       data: reservas
     });
   } catch (error) {
+    console.error('Error en filtrarReservas:', error);
     res.status(400).json({ 
       success: false,
       error: error.message 
@@ -435,6 +455,8 @@ export const filtrarReservas = async (req, res) => {
 export const obtenerReservasAdmin = async (req, res) => {
   try {
     const { page = 1, limit = 10, estado, fechaInicio, fechaFin } = req.query;
+    
+    console.log('📋 obtenerReservasAdmin - Página:', page);
     
     const filter = {};
     if (estado) filter.estado = estado;
@@ -456,6 +478,8 @@ export const obtenerReservasAdmin = async (req, res) => {
 
     const pages = Math.ceil(total / limit);
 
+    console.log(`📊 ${total} reservas totales, ${pages} páginas`);
+    
     res.status(200).json({
       success: true,
       data: reservas,
@@ -475,6 +499,8 @@ export const obtenerReservasAdmin = async (req, res) => {
 
 export const obtenerReservaById = async (req, res) => {
   try {
+    console.log('🔍 obtenerReservaById - ID:', req.params.id);
+    
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ 
         success: false,
@@ -505,16 +531,22 @@ export const obtenerReservaById = async (req, res) => {
       });
     }
     
-    // Agregar desglose de precios si existe
     const fechaInicio = new Date(reserva.fechaInicio);
     const fechaFin = new Date(reserva.fechaFin);
     const desglose = obtenerDesglosePrecios(fechaInicio, fechaFin);
+    
+    console.log('📅 Reserva encontrada:', {
+      id: reserva._id,
+      fechaInicio: fechaInicio.toISOString().split('T')[0],
+      fechaFin: fechaFin.toISOString().split('T')[0],
+      noches: Math.floor((fechaFin - fechaInicio) / (1000 * 60 * 60 * 24))
+    });
     
     const reservaFormateada = {
       ...reserva,
       fechaInicio: reserva.fechaInicio?.toISOString().split('T')[0] || '',
       fechaFin: reserva.fechaFin?.toISOString().split('T')[0] || '',
-      precioDesglose: desglose.desglose, // 🔥 Mostrar desglose
+      precioDesglose: desglose.desglose,
       cabana: reserva.cabana ? {
         _id: reserva.cabana._id,
         nombre: reserva.cabana.nombre,
@@ -541,10 +573,12 @@ export const obtenerReservaById = async (req, res) => {
   }
 };
 
-// controllers/reservaController.js - CORREGIR getFechasOcupadas
+// 🔥 FUNCIÓN CORREGIDA Y MEJORADA CON LOGGING
 export const getFechasOcupadas = async (req, res) => {
   try {
     const { cabanaId, startDate, endDate } = req.query;
+
+    console.log('📅 getFechasOcupadas - Solicitud:', { cabanaId, startDate, endDate });
 
     if (cabanaId && !mongoose.Types.ObjectId.isValid(cabanaId)) {
       return res.status(400).json({ 
@@ -555,7 +589,10 @@ export const getFechasOcupadas = async (req, res) => {
 
     const query = { estado: { $ne: 'cancelada' } };
     
-    if (cabanaId) query.cabana = cabanaId;
+    if (cabanaId) {
+      query.cabana = cabanaId;
+      console.log(`🏠 Filtrando por cabaña: ${cabanaId}`);
+    }
     
     if (startDate && endDate) {
       const start = new Date(startDate);
@@ -574,6 +611,7 @@ export const getFechasOcupadas = async (req, res) => {
           fechaFin: { $gte: start }
         }
       ];
+      console.log(`📆 Rango solicitado: ${startDate} a ${endDate}`);
     }
 
     const reservas = await Reserva.find(query)
@@ -581,61 +619,77 @@ export const getFechasOcupadas = async (req, res) => {
       .populate('cabana', 'nombre')
       .lean();
 
-    // 🔥 CORRECCIÓN CRÍTICA: Formatear respuesta correctamente
-    // NO incluir el día de check-out como ocupado
-    const fechasOcupadas = reservas.map(reserva => {
-      const fechaInicio = new Date(reserva.fechaInicio);
-      const fechaFin = new Date(reserva.fechaFin);
-      
-      // Generar array de días ocupados (NO incluye fechaFin)
-      const diasOcupados = [];
-      const current = new Date(fechaInicio);
-      
-      while (current < fechaFin) {
-        diasOcupados.push({
-          fecha: current.toISOString().split('T')[0],
+    console.log(`📊 ${reservas.length} reservas encontradas`);
+
+    // 🔥 CORRECCIÓN CRÍTICA: Procesar fechas ocupadas correctamente
+    const todasFechasOcupadas = [];
+    
+    reservas.forEach((reserva, index) => {
+      try {
+        const fechaInicio = new Date(reserva.fechaInicio);
+        const fechaFin = new Date(reserva.fechaFin);
+        
+        fechaInicio.setHours(0, 0, 0, 0);
+        fechaFin.setHours(0, 0, 0, 0);
+        
+        console.log(`📅 Reserva ${index + 1}:`, {
           cabana: reserva.cabana?.nombre || 'Desconocida',
-          reservaId: reserva._id
+          checkIn: fechaInicio.toISOString().split('T')[0],
+          checkOut: fechaFin.toISOString().split('T')[0],
+          noches: Math.floor((fechaFin - fechaInicio) / (1000 * 60 * 60 * 24))
         });
-        current.setDate(current.getDate() + 1);
+        
+        const current = new Date(fechaInicio);
+        
+        // 🔥 LOGICA CORRECTA: NO incluir el día de check-out
+        while (current < fechaFin) {
+          const fechaStr = current.toISOString().split('T')[0];
+          
+          todasFechasOcupadas.push({
+            fecha: fechaStr,
+            cabana: reserva.cabana?.nombre || 'Desconocida',
+            reservaId: reserva._id,
+            checkIn: fechaInicio.toISOString().split('T')[0],
+            checkOut: fechaFin.toISOString().split('T')[0]
+          });
+          
+          console.log(`   🛌 Noche ocupada: ${fechaStr} (noche del ${fechaStr})`);
+          current.setDate(current.getDate() + 1);
+        }
+        
+        // 🔥 MOSTRAR EXPLICITAMENTE QUE EL DÍA DE CHECK-OUT NO ESTÁ OCUPADO
+        const checkOutDate = fechaFin.toISOString().split('T')[0];
+        console.log(`   ✅ Día LIBRE (check-out): ${checkOutDate} - Disponible para nueva reserva`);
+        
+      } catch (error) {
+        console.warn(`⚠️ Error procesando reserva ${reserva._id}:`, error.message);
       }
-      
-      return {
-        reservaId: reserva._id,
-        fechaInicio: fechaInicio.toISOString().split('T')[0],
-        fechaFin: fechaFin.toISOString().split('T')[0],
-        cabana: reserva.cabana?.nombre || 'Desconocida',
-        // 🔥 DEVOLVER LOS DÍAS REALMENTE OCUPADOS (no incluye fechaFin)
-        diasOcupados: diasOcupados
-      };
     });
 
-    // Alternativa: devolver array plano de fechas ocupadas
-    const todasFechasOcupadas = [];
-    reservas.forEach(reserva => {
-      const start = new Date(reserva.fechaInicio);
-      const end = new Date(reserva.fechaFin);
-      const current = new Date(start);
-      
-      while (current < end) {
-        todasFechasOcupadas.push({
-          fecha: current.toISOString().split('T')[0],
-          cabana: reserva.cabana?.nombre || 'Desconocida',
-          reservaId: reserva._id
-        });
-        current.setDate(current.getDate() + 1);
+    // Filtrar duplicados
+    const fechasUnicas = [];
+    const fechasSet = new Set();
+    
+    todasFechasOcupadas.forEach(item => {
+      if (!fechasSet.has(item.fecha)) {
+        fechasSet.add(item.fecha);
+        fechasUnicas.push(item);
       }
     });
+
+    console.log(`📈 Total días ocupados únicos: ${fechasUnicas.length}`);
+    console.log('📋 Fechas ocupadas:', fechasUnicas.map(f => f.fecha));
 
     res.status(200).json({
       success: true,
-      data: todasFechasOcupadas, // 🔥 Array plano para frontend fácil
-      reservas: fechasOcupadas,  // 🔥 Detalle por reserva
-      total: todasFechasOcupadas.length
+      data: fechasUnicas.map(item => item.fecha), // Solo las fechas para frontend
+      detalles: fechasUnicas, // Detalles completos para debug
+      total: fechasUnicas.length,
+      mensaje: `Se encontraron ${fechasUnicas.length} días ocupados ${cabanaId ? 'para esta cabaña' : 'en total'}`
     });
 
   } catch (error) {
-    console.error('Error en getFechasOcupadas:', error);
+    console.error('❌ Error en getFechasOcupadas:', error);
     res.status(500).json({ 
       success: false,
       error: 'Error al obtener fechas ocupadas',
@@ -651,7 +705,8 @@ export const getCabanasDisponibles = async (req, res) => {
   try {
     const { fechaInicio, fechaFin } = req.query;
 
-    // Validar que se proporcionen ambas fechas
+    console.log('🔍 getCabanasDisponibles - Fechas:', { fechaInicio, fechaFin });
+
     if (!fechaInicio || !fechaFin) {
       return res.status(400).json({
         success: false,
@@ -659,7 +714,6 @@ export const getCabanasDisponibles = async (req, res) => {
       });
     }
 
-    // Validar formato de fechas
     const fechaInicioDate = new Date(fechaInicio);
     const fechaFinDate = new Date(fechaFin);
     
@@ -677,12 +731,12 @@ export const getCabanasDisponibles = async (req, res) => {
       });
     }
 
-    // 1. Obtener TODAS las cabañas
     const todasLasCabanas = await Cabana.find({})
       .select('nombre capacidad precio imagenes descripcion comodidades imagenPrincipal')
       .lean();
 
-    // 2. Obtener reservas ACTIVAS en el rango de fechas
+    console.log(`🏠 ${todasLasCabanas.length} cabañas en total`);
+
     const reservasEnRango = await Reserva.find({
       estado: { $ne: 'cancelada' },
       $or: [
@@ -693,22 +747,22 @@ export const getCabanasDisponibles = async (req, res) => {
       ]
     }).select('cabana fechaInicio fechaFin').lean();
 
-    // 3. Crear un Set de IDs de cabañas OCUPADAS
+    console.log(`📅 ${reservasEnRango.length} reservas activas en el rango`);
+
     const cabanasOcupadasIds = new Set();
     reservasEnRango.forEach(reserva => {
       cabanasOcupadasIds.add(reserva.cabana.toString());
     });
 
-    // 4. Filtrar las cabañas DISPONIBLES (las que NO están en el Set de ocupadas)
     const cabanasDisponibles = todasLasCabanas.filter(cabana => 
       !cabanasOcupadasIds.has(cabana._id.toString())
     );
 
-    // 5. Formatear la respuesta con URLs de imágenes completas
+    console.log(`✅ ${cabanasDisponibles.length} cabañas disponibles`);
+
     const API_URL = process.env.API_URL || 'http://localhost:5000';
     
     const cabanasFormateadas = cabanasDisponibles.map(cabana => {
-      // Obtener imagen principal
       let imagenPrincipal = `${API_URL}/default-cabana.jpg`;
       
       if (cabana.imagenPrincipal) {
@@ -730,7 +784,6 @@ export const getCabanasDisponibles = async (req, res) => {
           }
         }
       } else if (cabana.imagenes && cabana.imagenes.length > 0) {
-        // Usar primera imagen como fallback
         const primeraImagen = cabana.imagenes[0];
         if (typeof primeraImagen === 'string') {
           if (primeraImagen.startsWith('http')) {
