@@ -345,6 +345,7 @@ export const verCabana = async (req, res) => {
 };
 
 
+// controllers/cabanaController.js - CORREGIR listarCabanasDisponibles
 export const listarCabanasDisponibles = async (req, res) => {
     try {
         const { fechaInicio, fechaFin } = req.query;
@@ -384,19 +385,34 @@ export const listarCabanasDisponibles = async (req, res) => {
             });
         }
 
-        // Buscar reservas que se superpongan
+        // 🔥 CORRECCIÓN: Buscar reservas que se superpongan CORRECTAMENTE
+        // Una reserva ocupa desde fechaInicio HASTA fechaFin-1
         const reservas = await Reserva.find({
-            $or: [
-                { 
-                    fechaInicio: { $lt: fechaFinDate }, 
-                    fechaFin: { $gt: fechaInicioDate } 
-                }
-            ],
             estado: { $ne: 'cancelada' }
-        }).select('cabana');
+        }).select('cabana fechaInicio fechaFin');
 
-        // Obtener IDs de cabañas ocupadas
-        const cabanasOcupadasIds = [...new Set(reservas.map(r => r.cabana.toString()))];
+        // Obtener IDs de cabañas ocupadas para las fechas solicitadas
+        const cabanasOcupadasIds = [];
+        
+        reservas.forEach(reserva => {
+            const reservaInicio = new Date(reserva.fechaInicio);
+            const reservaFin = new Date(reserva.fechaFin);
+            
+            // 🔥 LÓGICA CORREGIDA: Una reserva NO ocupa su fecha de salida
+            // Reserva ocupa: [reservaInicio, reservaFin)
+            // Nueva reserva: [fechaInicioDate, fechaFinDate)
+            
+            // Hay conflicto si los rangos se superponen excluyendo el día de salida
+            const hayConflicto = 
+                reservaInicio < fechaFinDate && // Reserva comienza antes que nueva termine
+                reservaFin > fechaInicioDate;   // Reserva termina después que nueva comience
+                // NOTA: fechaFinDate es EXCLUSIVO (check-in no permitido ese día)
+                //       reservaFin es EXCLUSIVO (check-out ese día)
+            
+            if (hayConflicto) {
+                cabanasOcupadasIds.push(reserva.cabana.toString());
+            }
+        });
 
         // Buscar cabañas disponibles con imágenes
         const cabanasDisponibles = await Cabana.find({
@@ -411,6 +427,7 @@ export const listarCabanasDisponibles = async (req, res) => {
         .lean();
 
         // Construir respuesta consistente
+        const API_URL = process.env.API_URL || 'http://localhost:5000';
         const response = cabanasDisponibles.map(cabana => {
             const imagen = cabana.images?.[0]?.url || 
                          cabana.imagenPrincipal || 
@@ -422,17 +439,32 @@ export const listarCabanasDisponibles = async (req, res) => {
                 descripcion: cabana.descripcion,
                 capacidad: cabana.capacidad,
                 precio: cabana.precio,
-                comodidades: cabana.comodidades,
+                servicios: cabana.servicios || [],
                 imagenPrincipal: imagen.startsWith('http') ? imagen : `${API_URL}${imagen.startsWith('/') ? '' : '/'}${imagen}`,
                 createdAt: cabana.createdAt,
-                updatedAt: cabana.updatedAt
+                updatedAt: cabana.updatedAt,
+                disponible: true,
+                // 🔥 Info de debug
+                debug: {
+                    fechaInicio: fechaInicio,
+                    fechaFin: fechaFin,
+                    totalCabanas: cabanasDisponibles.length,
+                    ocupadas: cabanasOcupadasIds.length
+                }
             };
         });
 
         res.status(200).json({ 
             success: true,
             count: response.length,
-            data: response
+            data: response,
+            debug: {
+                fechaInicio,
+                fechaFin,
+                cabanasOcupadas: cabanasOcupadasIds.length,
+                totalCabanas: cabanasDisponibles.length,
+                logic: 'Una reserva ocupa desde fechaInicio HASTA fechaFin-1 (no incluye día de salida)'
+            }
         });
 
     } catch (error) {
@@ -442,7 +474,9 @@ export const listarCabanasDisponibles = async (req, res) => {
             error: 'Error al buscar cabañas disponibles',
             details: process.env.NODE_ENV === 'development' ? {
                 message: error.message,
-                stack: error.stack
+                stack: error.stack,
+                fechaInicio: req.query.fechaInicio,
+                fechaFin: req.query.fechaFin
             } : undefined
         });
     }

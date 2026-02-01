@@ -541,6 +541,7 @@ export const obtenerReservaById = async (req, res) => {
   }
 };
 
+// controllers/reservaController.js - CORREGIR getFechasOcupadas
 export const getFechasOcupadas = async (req, res) => {
   try {
     const { cabanaId, startDate, endDate } = req.query;
@@ -580,16 +581,57 @@ export const getFechasOcupadas = async (req, res) => {
       .populate('cabana', 'nombre')
       .lean();
 
-    // Formatear respuesta
-    const fechasOcupadas = reservas.map(reserva => ({
-      fechaInicio: reserva.fechaInicio.toISOString().split('T')[0],
-      fechaFin: reserva.fechaFin.toISOString().split('T')[0],
-      cabana: reserva.cabana?.nombre || 'Desconocida'
-    }));
+    // 🔥 CORRECCIÓN CRÍTICA: Formatear respuesta correctamente
+    // NO incluir el día de check-out como ocupado
+    const fechasOcupadas = reservas.map(reserva => {
+      const fechaInicio = new Date(reserva.fechaInicio);
+      const fechaFin = new Date(reserva.fechaFin);
+      
+      // Generar array de días ocupados (NO incluye fechaFin)
+      const diasOcupados = [];
+      const current = new Date(fechaInicio);
+      
+      while (current < fechaFin) {
+        diasOcupados.push({
+          fecha: current.toISOString().split('T')[0],
+          cabana: reserva.cabana?.nombre || 'Desconocida',
+          reservaId: reserva._id
+        });
+        current.setDate(current.getDate() + 1);
+      }
+      
+      return {
+        reservaId: reserva._id,
+        fechaInicio: fechaInicio.toISOString().split('T')[0],
+        fechaFin: fechaFin.toISOString().split('T')[0],
+        cabana: reserva.cabana?.nombre || 'Desconocida',
+        // 🔥 DEVOLVER LOS DÍAS REALMENTE OCUPADOS (no incluye fechaFin)
+        diasOcupados: diasOcupados
+      };
+    });
+
+    // Alternativa: devolver array plano de fechas ocupadas
+    const todasFechasOcupadas = [];
+    reservas.forEach(reserva => {
+      const start = new Date(reserva.fechaInicio);
+      const end = new Date(reserva.fechaFin);
+      const current = new Date(start);
+      
+      while (current < end) {
+        todasFechasOcupadas.push({
+          fecha: current.toISOString().split('T')[0],
+          cabana: reserva.cabana?.nombre || 'Desconocida',
+          reservaId: reserva._id
+        });
+        current.setDate(current.getDate() + 1);
+      }
+    });
 
     res.status(200).json({
       success: true,
-      data: fechasOcupadas
+      data: todasFechasOcupadas, // 🔥 Array plano para frontend fácil
+      reservas: fechasOcupadas,  // 🔥 Detalle por reserva
+      total: todasFechasOcupadas.length
     });
 
   } catch (error) {
