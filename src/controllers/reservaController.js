@@ -705,8 +705,10 @@ export const getCabanasDisponibles = async (req, res) => {
   try {
     const { fechaInicio, fechaFin } = req.query;
 
-    console.log('🔍 getCabanasDisponibles - Fechas:', { fechaInicio, fechaFin });
+    console.log('🔍 ========== INICIO DEBUG PROFUNDO ==========');
+    console.log('📅 Fechas solicitadas:', { fechaInicio, fechaFin });
 
+    // Validaciones básicas de fechas
     if (!fechaInicio || !fechaFin) {
       return res.status(400).json({
         success: false,
@@ -714,18 +716,9 @@ export const getCabanasDisponibles = async (req, res) => {
       });
     }
 
-    // 🔥 NORMALIZAR FECHAS - CRÍTICO
     const fechaInicioDate = new Date(fechaInicio);
-    fechaInicioDate.setHours(0, 0, 0, 0);
-    
     const fechaFinDate = new Date(fechaFin);
-    fechaFinDate.setHours(0, 0, 0, 0);
     
-    console.log('📅 Fechas normalizadas:', {
-      inicio: fechaInicioDate.toISOString(),
-      fin: fechaFinDate.toISOString()
-    });
-
     if (isNaN(fechaInicioDate.getTime()) || isNaN(fechaFinDate.getTime())) {
       return res.status(400).json({
         success: false,
@@ -740,201 +733,256 @@ export const getCabanasDisponibles = async (req, res) => {
       });
     }
 
-    // 🔥 OBTENER TODAS LAS CABANAS
-    const todasLasCabanas = await Cabana.find({})
-      .select('nombre capacidad precio imagenes descripcion comodidades imagenPrincipal _id')
-      .lean();
-
-    console.log(`🏠 ${todasLasCabanas.length} cabañas en total DB:`);
-    todasLasCabanas.forEach((cabana, index) => {
-      console.log(`   ${index + 1}. ${cabana.nombre} (ID: ${cabana._id})`);
+    // 🔥 DEBUG 1: Verificar conexión y colección directamente con MongoDB driver
+    console.log('🔍 DEBUG 1: Verificando base de datos con MongoDB driver...');
+    const db = mongoose.connection.db;
+    
+    // Listar todas las colecciones
+    const collections = await db.listCollections().toArray();
+    console.log('📁 Colecciones disponibles:');
+    collections.forEach((col, i) => {
+      console.log(`   ${i + 1}. ${col.name} (type: ${col.type})`);
     });
 
-    // 🔥 LÓGICA CORREGIDA: CHECK-OUT NO BLOQUEA CHECK-IN MISMO DÍA
-    // Nueva reserva: check-in X, check-out Y
-    // Reserva existente: check-in A, check-out B
-    // CONFLICTO si: 
-    // 1. A < Y (reserva existente comienza antes de que termine mi reserva)
-    // 2. B > X (reserva existente termina después de que comience mi reserva)
-    // PERO: Si B == X (check-out mismo día que mi check-in) → NO CONFLICTO
+    // 🔥 DEBUG 2: Contar documentos en cada colección relevante
+    console.log('🔍 DEBUG 2: Contando documentos...');
+    const cabanasCount = await db.collection('cabanas').countDocuments();
+    console.log(`📊 Total documentos en colección 'cabanas': ${cabanasCount}`);
     
+    // También verificar si hay otra colección similar
+    const possibleCollections = ['cabanas', 'Cabanas', 'cabana', 'Cabana', 'rooms', 'cottages'];
+    for (const colName of possibleCollections) {
+      try {
+        const count = await db.collection(colName).countDocuments();
+        if (count > 0) {
+          console.log(`📊 Colección '${colName}': ${count} documentos`);
+        }
+      } catch (err) {
+        // Colección no existe, continuar
+      }
+    }
+
+    // 🔥 DEBUG 3: Obtener TODOS los documentos de 'cabanas' SIN filtros
+    console.log('🔍 DEBUG 3: Obteniendo todos los documentos de "cabanas"...');
+    const todasCabanasRaw = await db.collection('cabanas').find({}).toArray();
+    console.log(`📄 MongoDB driver encontró: ${todasCabanasRaw.length} documentos`);
+    
+    if (todasCabanasRaw.length === 0) {
+      console.warn('⚠️ ¡La colección "cabanas" está VACÍA según MongoDB driver!');
+    } else {
+      todasCabanasRaw.forEach((doc, i) => {
+        console.log(`   ${i + 1}. ID: ${doc._id}`);
+        console.log(`      Nombre: "${doc.nombre || 'SIN NOMBRE'}"`);
+        console.log(`      Campos: ${Object.keys(doc).join(', ')}`);
+        console.log(`      ¿Tiene "nombre"?: ${!!doc.nombre}`);
+        console.log(`      ¿Tiene "deleted"?: ${!!doc.deleted}`);
+        console.log(`      ¿Tiene "activo"?: ${!!doc.activo}`);
+        console.log(`      ¿Tiene "estado"?: ${doc.estado || 'NO'}`);
+      });
+    }
+
+    // 🔥 DEBUG 4: Usar Mongoose (tu código actual)
+    console.log('🔍 DEBUG 4: Usando Mongoose (find {})...');
+    const todasLasCabanas = await Cabana.find({})
+      .select('nombre capacidad precio imagenes descripcion comodidades imagenPrincipal _id estado deleted activo')
+      .lean();
+
+    console.log(`🏠 Mongoose encontró: ${todasLasCabanas.length} documentos`);
+    todasLasCabanas.forEach((cabana, index) => {
+      console.log(`   ${index + 1}. ${cabana.nombre} (ID: ${cabana._id})`);
+      console.log(`      Estado: ${cabana.estado || 'no definido'}`);
+      console.log(`      Deleted: ${cabana.deleted || 'no definido'}`);
+      console.log(`      Activo: ${cabana.activo || 'no definido'}`);
+    });
+
+    // 🔥 DEBUG 5: Comparar resultados
+    console.log('🔍 DEBUG 5: Comparación final:');
+    console.log(`   - MongoDB driver: ${todasCabanasRaw.length} documentos en colección "cabanas"`);
+    console.log(`   - Mongoose Cabana.find({}): ${todasLasCabanas.length} documentos`);
+    
+    if (todasCabanasRaw.length !== todasLasCabanas.length) {
+      console.warn('⚠️ ¡DISCREPANCIA ENCONTRADA!');
+      
+      // Encontrar IDs en MongoDB pero no en Mongoose
+      const idsMongoose = new Set(todasLasCabanas.map(c => c._id.toString()));
+      const idsMongoDB = todasCabanasRaw.map(d => d._id.toString());
+      
+      const faltantesEnMongoose = idsMongoDB.filter(id => !idsMongoose.has(id));
+      const extrasEnMongoose = Array.from(idsMongoose).filter(id => !idsMongoDB.includes(id));
+      
+      console.log(`   ❌ Faltantes en Mongoose: ${faltantesEnMongoose.length}`);
+      if (faltantesEnMongoose.length > 0) {
+        console.log('   IDs faltantes:', faltantesEnMongoose);
+        
+        // Mostrar detalles de documentos faltantes
+        faltantesEnMongoose.forEach(id => {
+          const doc = todasCabanasRaw.find(d => d._id.toString() === id);
+          console.log(`   Documento faltante ID ${id}:`);
+          console.log(`      Nombre: "${doc.nombre || 'Sin nombre'}"`);
+          console.log(`      ¿Es ObjectId válido?: ${mongoose.Types.ObjectId.isValid(id)}`);
+          
+          // Verificar si tiene campos que podrían causar filtrado
+          const camposEspeciales = ['deleted', 'activo', 'estado', 'isDeleted', 'isActive', 'status'];
+          camposEspeciales.forEach(campo => {
+            if (doc[campo] !== undefined) {
+              console.log(`      ${campo}: ${doc[campo]}`);
+            }
+          });
+        });
+      }
+      
+      console.log(`   ❌ Extras en Mongoose: ${extrasEnMongoose.length}`);
+    }
+
+    // 🔥 DEBUG 6: Intentar con find sin condiciones de esquema
+    console.log('🔍 DEBUG 6: Probando Mongoose sin condiciones...');
+    try {
+      const todasSinFiltro = await mongoose.connection.db.collection('cabanas')
+        .find({})
+        .project({ nombre: 1, _id: 1, estado: 1, deleted: 1, activo: 1 })
+        .toArray();
+      console.log(`   Mongoose directo a colección: ${todasSinFiltro.length} documentos`);
+    } catch (error) {
+      console.error('   Error en consulta directa:', error.message);
+    }
+
+    // 🔥 DECIDIR QUÉ DATOS USAR
+    // Usar los datos de MongoDB driver si Mongoose está filtrando
+    const cabanasParaProcesar = todasCabanasRaw.length > 0 ? todasCabanasRaw : todasLasCabanas;
+    
+    console.log(`🏠 Usando ${cabanasParaProcesar.length} cabañas para procesamiento`);
+    console.log('🔍 ========== FIN DEBUG ==========\n');
+
+    // 🔥 CONTINUAR CON LA LÓGICA ORIGINAL PERO CON LOS DATOS CORRECTOS
+    // 1. Buscar reservas conflictivas
     const reservasEnRango = await Reserva.find({
       estado: { $ne: 'cancelada' },
       $or: [
-        // 🔥 CASO 1: Reserva existente COMIENZA dentro de mi estadía
-        // Y termina DESPUÉS de que yo comience
         {
           fechaInicio: { 
-            $lt: fechaFinDate,      // Comienza antes de que yo termine
-            $gt: fechaInicioDate    // Y después de que yo comience
+            $lt: fechaFinDate,
+            $gt: fechaInicioDate
           }
         },
-        // 🔥 CASO 2: Reserva existente TERMINA dentro de mi estadía  
-        // Y comienza ANTES de que yo termine
         {
           fechaFin: { 
-            $gt: fechaInicioDate,    // Termina después de que yo comience
-            $lt: fechaFinDate        // Y antes de que yo termine
+            $gt: fechaInicioDate,
+            $lt: fechaFinDate
           }
         },
-        // 🔥 CASO 3: Reserva existente ENVUELVE mi estadía
         {
           fechaInicio: { $lte: fechaInicioDate },
           fechaFin: { $gte: fechaFinDate }
         },
-        // 🔥 CASO 4: Reserva existente comienza el MISMO día que yo (check-in mismo día)
         {
           fechaInicio: fechaInicioDate
         }
       ]
     }).select('cabana fechaInicio fechaFin').lean();
 
-    console.log(`📅 ${reservasEnRango.length} reservas conflictivas encontradas:`);
-    reservasEnRango.forEach((reserva, index) => {
-      const inicio = new Date(reserva.fechaInicio);
-      const fin = new Date(reserva.fechaFin);
-      inicio.setHours(0, 0, 0, 0);
-      fin.setHours(0, 0, 0, 0);
-      
-      console.log(`   ${index + 1}. Cabana: ${reserva.cabana}`);
-      console.log(`       Reserva: ${inicio.toISOString().split('T')[0]} a ${fin.toISOString().split('T')[0]}`);
-      console.log(`       Mi reserva: ${fechaInicioDate.toISOString().split('T')[0]} a ${fechaFinDate.toISOString().split('T')[0]}`);
-      
-      // Explicar por qué es conflicto
-      if (inicio.getTime() === fechaInicioDate.getTime()) {
-        console.log(`       → CONFLICTO: Check-in mismo día`);
-      } else if (inicio < fechaFinDate && inicio > fechaInicioDate) {
-        console.log(`       → CONFLICTO: Comienza durante mi estadía`);
-      } else if (fin > fechaInicioDate && fin < fechaFinDate) {
-        console.log(`       → CONFLICTO: Termina durante mi estadía`);
-      } else if (inicio <= fechaInicioDate && fin >= fechaFinDate) {
-        console.log(`       → CONFLICTO: Envuelve mi estadía`);
-      }
-    });
+    console.log(`📅 Reservas conflictivas: ${reservasEnRango.length}`);
 
-    // 🔥 IDs de cabañas OCUPADAS
+    // 2. IDs de cabañas ocupadas
     const cabanasOcupadasIds = new Set();
     reservasEnRango.forEach(reserva => {
       cabanasOcupadasIds.add(reserva.cabana.toString());
     });
 
-    console.log(`🚫 Cabañas ocupadas IDs:`, Array.from(cabanasOcupadasIds));
-
-    // 🔥 VERIFICACIÓN ESPECÍFICA
-    const cabanaTroncos = todasLasCabanas.find(c => 
-      c.nombre && (c.nombre.includes('Troncos') || c.nombre.includes('troncos'))
-    );
-    const cabanaNormanda = todasLasCabanas.find(c => 
-      c.nombre && (c.nombre.includes('Normanda') || c.nombre.includes('Normandia'))
-    );
-
-    if (cabanaTroncos) {
-      const ocupada = cabanasOcupadasIds.has(cabanaTroncos._id.toString());
-      console.log(`🔍 Cabaña de Troncos (${cabanaTroncos._id}): ${ocupada ? 'OCUPADA ❌' : 'DISPONIBLE ✅'}`);
-      
-      // Buscar reserva específica que causa conflicto
-      if (ocupada) {
-        const reservaConflicto = reservasEnRango.find(r => 
-          r.cabana.toString() === cabanaTroncos._id.toString()
-        );
-        if (reservaConflicto) {
-          const inicioRes = new Date(reservaConflicto.fechaInicio).toISOString().split('T')[0];
-          const finRes = new Date(reservaConflicto.fechaFin).toISOString().split('T')[0];
-          console.log(`   Reserva conflictiva: ${inicioRes} a ${finRes}`);
-        }
-      }
-    }
-
-    if (cabanaNormanda) {
-      const ocupada = cabanasOcupadasIds.has(cabanaNormanda._id.toString());
-      console.log(`🔍 cabaña Normanda (${cabanaNormanda._id}): ${ocupada ? 'OCUPADA ❌' : 'DISPONIBLE ✅'}`);
-    }
-
-    // 🔥 FILTRAR DISPONIBLES
-    const cabanasDisponibles = todasLasCabanas.filter(cabana => 
-      !cabanasOcupadasIds.has(cabana._id.toString())
-    );
-
-    console.log(`✅ ${cabanasDisponibles.length} cabañas disponibles de ${todasLasCabanas.length}:`);
-    cabanasDisponibles.forEach(cabana => {
-      console.log(`   - ${cabana.nombre} (${cabana._id})`);
-    });
-
-    // 🔥 FORMATO DE RESPUESTA
-    const API_URL = process.env.API_URL || 'http://localhost:5000';
-    
-    const cabanasFormateadas = cabanasDisponibles.map(cabana => {
-      // ... (mantén el mismo código de formato de imágenes)
-      let imagenPrincipal = `${API_URL}/default-cabana.jpg`;
-      
-      if (cabana.imagenPrincipal) {
-        if (typeof cabana.imagenPrincipal === 'string') {
-          if (cabana.imagenPrincipal.startsWith('http')) {
-            imagenPrincipal = cabana.imagenPrincipal;
-          } else if (cabana.imagenPrincipal.startsWith('/')) {
-            imagenPrincipal = `${API_URL}${cabana.imagenPrincipal}`;
-          } else {
-            imagenPrincipal = `${API_URL}/${cabana.imagenPrincipal}`;
+    // 3. Filtrar cabañas disponibles
+    // Convertir los documentos raw a formato compatible
+    const cabanasDisponibles = cabanasParaProcesar
+      .filter(doc => {
+        const id = doc._id.toString();
+        return !cabanasOcupadasIds.has(id);
+      })
+      .map(doc => {
+        // Formatear como espera el frontend
+        const API_URL = process.env.API_URL || 'http://localhost:5000';
+        let imagenPrincipal = `${API_URL}/default-cabana.jpg`;
+        
+        // Lógica simple para imagen
+        if (doc.imagenPrincipal) {
+          if (typeof doc.imagenPrincipal === 'string') {
+            imagenPrincipal = doc.imagenPrincipal.startsWith('http') 
+              ? doc.imagenPrincipal 
+              : `${API_URL}${doc.imagenPrincipal.startsWith('/') ? '' : '/'}${doc.imagenPrincipal}`;
+          } else if (doc.imagenPrincipal._id) {
+            imagenPrincipal = `${API_URL}/api/images/${doc.imagenPrincipal._id}`;
           }
-        } else if (cabana.imagenPrincipal.url) {
-          if (cabana.imagenPrincipal.url.startsWith('http')) {
-            imagenPrincipal = cabana.imagenPrincipal.url;
-          } else if (cabana.imagenPrincipal.url.startsWith('/')) {
-            imagenPrincipal = `${API_URL}${cabana.imagenPrincipal.url}`;
-          } else {
-            imagenPrincipal = `${API_URL}/${cabana.imagenPrincipal.url}`;
-          }
-        } else if (cabana.imagenPrincipal._id) {
-          imagenPrincipal = `${API_URL}/api/images/${cabana.imagenPrincipal._id}`;
         }
-      }
 
-      return {
-        _id: cabana._id,
-        nombre: cabana.nombre,
-        capacidad: cabana.capacidad,
-        precio: cabana.precio,
-        descripcion: cabana.descripcion,
-        comodidades: cabana.comodidades || [],
-        imagenPrincipal: imagenPrincipal,
-        imagenes: cabana.imagenes || [],
-        disponible: true
-      };
-    });
+        return {
+          _id: doc._id,
+          nombre: doc.nombre || 'Cabaña sin nombre',
+          capacidad: doc.capacidad || 2,
+          precio: doc.precio || 0,
+          descripcion: doc.descripcion || '',
+          servicios: Array.isArray(doc.servicios) ? doc.servicios : [],
+          comodidades: Array.isArray(doc.comodidades) ? doc.comodidades : [],
+          imagenPrincipal: imagenPrincipal,
+          imagenes: Array.isArray(doc.imagenes) ? doc.imagenes : [],
+          disponible: true
+        };
+      });
 
+    console.log(`✅ ${cabanasDisponibles.length} cabañas disponibles`);
+
+    // 🔥 RESPUESTA CON DEBUG COMPLETO
     res.status(200).json({
       success: true,
-      count: cabanasFormateadas.length,
-      data: cabanasFormateadas,
-      total: cabanasFormateadas.length,
-      filtros: {
-        fechaInicio: fechaInicioDate.toISOString().split('T')[0],
-        fechaFin: fechaFinDate.toISOString().split('T')[0],
-        noches: Math.floor((fechaFinDate - fechaInicioDate) / (1000 * 60 * 60 * 24))
-      },
+      count: cabanasDisponibles.length,
+      data: cabanasDisponibles,
       debug: {
-        totalCabanasEnDB: todasLasCabanas.length,
-        fechasSolicitadas: {
-          inicio: fechaInicioDate.toISOString(),
-          fin: fechaFinDate.toISOString()
+        fechaSolicitada: { fechaInicio, fechaFin },
+        database: {
+          totalColecciones: collections.length,
+          colecciones: collections.map(c => c.name),
+          documentos: {
+            mongoDriver: todasCabanasRaw.length,
+            mongoose: todasLasCabanas.length,
+            usadoParaProcesar: cabanasParaProcesar.length
+          },
+          detallesMongoDB: todasCabanasRaw.map(d => ({
+            id: d._id,
+            nombre: d.nombre || null,
+            tieneNombre: !!d.nombre,
+            campos: Object.keys(d),
+            estado: d.estado,
+            deleted: d.deleted,
+            activo: d.activo
+          })),
+          detallesMongoose: todasLasCabanas.map(c => ({
+            id: c._id,
+            nombre: c.nombre,
+            estado: c.estado,
+            deleted: c.deleted,
+            activo: c.activo
+          }))
         },
-        reservasConflictivas: reservasEnRango.map(r => ({
-          cabana: r.cabana,
-          inicio: new Date(r.fechaInicio).toISOString(),
-          fin: new Date(r.fechaFin).toISOString()
-        })),
-        cabanasOcupadas: Array.from(cabanasOcupadasIds),
-        cabanasDisponibles: cabanasDisponibles.map(c => ({ nombre: c.nombre, id: c._id })),
-        logica: 'CONFLICTO si: (A < Y Y B > X) donde A=inicio reserva existente, B=fin reserva existente, X=mi check-in, Y=mi check-out'
+        reservas: {
+          conflictivas: reservasEnRango.length,
+          detalles: reservasEnRango.map(r => ({
+            cabana: r.cabana,
+            inicio: new Date(r.fechaInicio).toISOString().split('T')[0],
+            fin: new Date(r.fechaFin).toISOString().split('T')[0]
+          }))
+        },
+        cabanas: {
+          ocupadas: Array.from(cabanasOcupadasIds),
+          disponibles: cabanasDisponibles.map(c => ({ id: c._id, nombre: c.nombre }))
+        }
       }
     });
 
   } catch (error) {
-    console.error('❌ Error en getCabanasDisponibles:', error);
+    console.error('❌ Error crítico en getCabanasDisponibles:', error);
     res.status(500).json({
       success: false,
       error: 'Error al buscar cabañas disponibles',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details: process.env.NODE_ENV === 'development' ? {
+        message: error.message,
+        stack: error.stack
+      } : undefined
     });
   }
 };
