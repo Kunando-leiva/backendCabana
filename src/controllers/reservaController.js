@@ -714,7 +714,7 @@ export const getCabanasDisponibles = async (req, res) => {
       });
     }
 
-    // 🔥 NORMALIZAR FECHAS A MEDIANOCHE
+    // 🔥 NORMALIZAR FECHAS - CRÍTICO
     const fechaInicioDate = new Date(fechaInicio);
     fechaInicioDate.setHours(0, 0, 0, 0);
     
@@ -735,59 +735,56 @@ export const getCabanasDisponibles = async (req, res) => {
       });
     }
 
+    // 🔥 OBTENER TODAS LAS CABANAS CON IDs
     const todasLasCabanas = await Cabana.find({})
-      .select('nombre capacidad precio imagenes descripcion comodidades imagenPrincipal')
+      .select('nombre capacidad precio imagenes descripcion comodidades imagenPrincipal _id')
       .lean();
 
-    console.log(`🏠 ${todasLasCabanas.length} cabañas en total`);
+    console.log(`🏠 ${todasLasCabanas.length} cabañas en total DB:`);
+    todasLasCabanas.forEach((cabana, index) => {
+      console.log(`   ${index + 1}. ${cabana.nombre} (ID: ${cabana._id})`);
+    });
 
-    // 🔥 CONSULTA CORREGIDA: Solo conflictos REALES (no incluye check-out)
-    // Reserva: check-in el A, check-out el B
-    // Nueva reserva: check-in el X, check-out el Y
-    // Conflicto si: A < Y Y B > X
-    // Pero queremos: check-out (B) NO bloquea check-in (X) en el mismo día
-    // Entonces: Conflicto si: A < Y Y B > X
+    // 🔥 LÓGICA CORRECTA DE DISPONIBILIDAD
+    // Nueva reserva: check-in X, check-out Y
+    // Reserva existente: check-in A, check-out B
+    // CONFLICTO si: A < Y Y B > X
     
     const reservasEnRango = await Reserva.find({
       estado: { $ne: 'cancelada' },
       $or: [
-        { 
-          // Caso 1: La reserva existente comienza DENTRO de la nueva reserva
+        // Caso 1: Reserva existente COMIENZA dentro del rango solicitado
+        // Y no termina antes del inicio (check-out mismo día OK)
+        {
           fechaInicio: { 
-            $gte: fechaInicioDate, 
-            $lt: fechaFinDate  // No incluye fechaFinDate (día de check-out)
+            $gte: fechaInicioDate,  // Comienza después o igual al inicio solicitado
+            $lt: fechaFinDate        // Pero antes del fin solicitado
           }
         },
-        { 
-          // Caso 2: La reserva existente termina DENTRO de la nueva reserva
+        // Caso 2: Reserva existente TERMINA dentro del rango solicitado
+        // Y comienza después del inicio (check-in mismo día OK)
+        {
           fechaFin: { 
-            $gt: fechaInicioDate,  // No incluye fechaInicioDate
-            $lte: fechaFinDate 
+            $gt: fechaInicioDate,    // Termina después del inicio solicitado
+            $lte: fechaFinDate        // Y antes o igual al fin solicitado
           }
         },
-        { 
-          // Caso 3: La reserva existente envuelve la nueva reserva
+        // Caso 3: Reserva existente ENVUELVE el rango solicitado
+        {
           fechaInicio: { $lt: fechaInicioDate },
           fechaFin: { $gt: fechaFinDate }
         }
       ]
     }).select('cabana fechaInicio fechaFin').lean();
 
-    console.log(`📅 ${reservasEnRango.length} reservas activas en el rango`);
-    
-    // 🔥 LOGGING DETALLADO para debug
-    reservasEnRango.forEach(reserva => {
-      console.log(`🔍 Reserva encontrada:`, {
-        cabana: reserva.cabana,
-        fechaInicio: new Date(reserva.fechaInicio).toISOString().split('T')[0],
-        fechaFin: new Date(reserva.fechaFin).toISOString().split('T')[0],
-        rangoSolicitado: {
-          inicio: fechaInicioDate.toISOString().split('T')[0],
-          fin: fechaFinDate.toISOString().split('T')[0]
-        }
-      });
+    console.log(`📅 ${reservasEnRango.length} reservas que podrían causar conflicto:`);
+    reservasEnRango.forEach((reserva, index) => {
+      const inicio = new Date(reserva.fechaInicio).toISOString().split('T')[0];
+      const fin = new Date(reserva.fechaFin).toISOString().split('T')[0];
+      console.log(`   ${index + 1}. Cabana: ${reserva.cabana} | ${inicio} a ${fin}`);
     });
 
+    // 🔥 IDs de cabañas OCUPADAS
     const cabanasOcupadasIds = new Set();
     reservasEnRango.forEach(reserva => {
       cabanasOcupadasIds.add(reserva.cabana.toString());
@@ -795,23 +792,45 @@ export const getCabanasDisponibles = async (req, res) => {
 
     console.log(`🚫 Cabañas ocupadas IDs:`, Array.from(cabanasOcupadasIds));
 
+    // 🔥 FILTRAR DISPONIBLES
     const cabanasDisponibles = todasLasCabanas.filter(cabana => 
       !cabanasOcupadasIds.has(cabana._id.toString())
     );
 
-    console.log(`✅ ${cabanasDisponibles.length} cabañas disponibles`);
-    
-    // 🔥 VERIFICACIÓN ESPECÍFICA para las dos cabañas
-    const cabanaTroncosId = '68361d2096798f108ef1827d'; // Reemplaza con ID real
-    const cabanaNormandaId = '68361c0796798f108ef18246'; // Reemplaza con ID real
-    
-    const troncosOcupada = cabanasOcupadasIds.has(cabanaTroncosId);
-    const normandaOcupada = cabanasOcupadasIds.has(cabanaNormandaId);
-    
-    console.log('🔍 Estado específico para 12-13 feb:');
-    console.log(`- Cabaña de Troncos: ${troncosOcupada ? 'OCUPADA ❌' : 'DISPONIBLE ✅'}`);
-    console.log(`- cabaña Normanda: ${normandaOcupada ? 'OCUPADA ❌' : 'DISPONIBLE ✅'}`);
+    console.log(`✅ ${cabanasDisponibles.length} cabañas disponibles de ${todasLasCabanas.length}:`);
+    cabanasDisponibles.forEach(cabana => {
+      console.log(`   - ${cabana.nombre} (${cabana._id})`);
+    });
 
+    // 🔥 VERIFICACIÓN ESPECÍFICA
+    const cabanaTroncos = todasLasCabanas.find(c => 
+      c.nombre && (c.nombre.includes('Troncos') || c.nombre.includes('troncos'))
+    );
+    const cabanaNormanda = todasLasCabanas.find(c => 
+      c.nombre && (c.nombre.includes('Normanda') || c.nombre.includes('Normandia'))
+    );
+
+    if (cabanaTroncos) {
+      const ocupada = cabanasOcupadasIds.has(cabanaTroncos._id.toString());
+      console.log(`🔍 Cabaña de Troncos (${cabanaTroncos._id}): ${ocupada ? 'OCUPADA ❌' : 'DISPONIBLE ✅'}`);
+      if (ocupada) {
+        console.log(`   Razón: Está en la lista de ocupadas`);
+      }
+    } else {
+      console.log('⚠️ Cabaña de Troncos NO encontrada en DB');
+    }
+
+    if (cabanaNormanda) {
+      const ocupada = cabanasOcupadasIds.has(cabanaNormanda._id.toString());
+      console.log(`🔍 cabaña Normanda (${cabanaNormanda._id}): ${ocupada ? 'OCUPADA ❌' : 'DISPONIBLE ✅'}`);
+      if (ocupada) {
+        console.log(`   Razón: Está en la lista de ocupadas`);
+      }
+    } else {
+      console.log('⚠️ cabaña Normanda NO encontrada en DB');
+    }
+
+    // 🔥 FORMATO DE RESPUESTA
     const API_URL = process.env.API_URL || 'http://localhost:5000';
     
     const cabanasFormateadas = cabanasDisponibles.map(cabana => {
@@ -834,6 +853,8 @@ export const getCabanasDisponibles = async (req, res) => {
           } else {
             imagenPrincipal = `${API_URL}/${cabana.imagenPrincipal.url}`;
           }
+        } else if (cabana.imagenPrincipal._id) {
+          imagenPrincipal = `${API_URL}/api/images/${cabana.imagenPrincipal._id}`;
         }
       } else if (cabana.imagenes && cabana.imagenes.length > 0) {
         const primeraImagen = cabana.imagenes[0];
@@ -849,6 +870,8 @@ export const getCabanasDisponibles = async (req, res) => {
           } else {
             imagenPrincipal = `${API_URL}${primeraImagen.url}`;
           }
+        } else if (primeraImagen._id) {
+          imagenPrincipal = `${API_URL}/api/images/${primeraImagen._id}`;
         }
       }
 
@@ -867,6 +890,7 @@ export const getCabanasDisponibles = async (req, res) => {
 
     res.status(200).json({
       success: true,
+      count: cabanasFormateadas.length,
       data: cabanasFormateadas,
       total: cabanasFormateadas.length,
       filtros: {
@@ -874,15 +898,18 @@ export const getCabanasDisponibles = async (req, res) => {
         fechaFin: fechaFinDate.toISOString().split('T')[0],
         noches: Math.floor((fechaFinDate - fechaInicioDate) / (1000 * 60 * 60 * 24))
       },
-      debug: { // 🔥 Para testing
-        totalCabanas: todasLasCabanas.length,
+      debug: {
+        totalCabanasEnDB: todasLasCabanas.length,
+        cabanasEnDB: todasLasCabanas.map(c => ({ nombre: c.nombre, id: c._id })),
         cabanasOcupadas: Array.from(cabanasOcupadasIds),
-        cabanasDisponibles: cabanasDisponibles.length
+        cabanasDisponibles: cabanasDisponibles.map(c => ({ nombre: c.nombre, id: c._id })),
+        logica: `Rango solicitado: ${fechaInicioDate.toISOString().split('T')[0]} a ${fechaFinDate.toISOString().split('T')[0]}`,
+        consulta: `Reservas conflictivas: fechaInicio >= ${fechaInicioDate.toISOString()} Y fechaInicio < ${fechaFinDate.toISOString()} O fechaFin > ${fechaInicioDate.toISOString()} Y fechaFin <= ${fechaFinDate.toISOString()}`
       }
     });
 
   } catch (error) {
-    console.error('Error en getCabanasDisponibles:', error);
+    console.error('❌ Error en getCabanasDisponibles:', error);
     res.status(500).json({
       success: false,
       error: 'Error al buscar cabañas disponibles',
