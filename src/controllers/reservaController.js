@@ -721,6 +721,11 @@ export const getCabanasDisponibles = async (req, res) => {
     const fechaFinDate = new Date(fechaFin);
     fechaFinDate.setHours(0, 0, 0, 0);
     
+    console.log('📅 Fechas normalizadas:', {
+      inicio: fechaInicioDate.toISOString(),
+      fin: fechaFinDate.toISOString()
+    });
+
     if (isNaN(fechaInicioDate.getTime()) || isNaN(fechaFinDate.getTime())) {
       return res.status(400).json({
         success: false,
@@ -735,7 +740,7 @@ export const getCabanasDisponibles = async (req, res) => {
       });
     }
 
-    // 🔥 OBTENER TODAS LAS CABANAS CON IDs
+    // 🔥 OBTENER TODAS LAS CABANAS
     const todasLasCabanas = await Cabana.find({})
       .select('nombre capacidad precio imagenes descripcion comodidades imagenPrincipal _id')
       .lean();
@@ -745,43 +750,66 @@ export const getCabanasDisponibles = async (req, res) => {
       console.log(`   ${index + 1}. ${cabana.nombre} (ID: ${cabana._id})`);
     });
 
-    // 🔥 LÓGICA CORRECTA DE DISPONIBILIDAD
+    // 🔥 LÓGICA CORREGIDA: CHECK-OUT NO BLOQUEA CHECK-IN MISMO DÍA
     // Nueva reserva: check-in X, check-out Y
     // Reserva existente: check-in A, check-out B
-    // CONFLICTO si: A < Y Y B > X
+    // CONFLICTO si: 
+    // 1. A < Y (reserva existente comienza antes de que termine mi reserva)
+    // 2. B > X (reserva existente termina después de que comience mi reserva)
+    // PERO: Si B == X (check-out mismo día que mi check-in) → NO CONFLICTO
     
     const reservasEnRango = await Reserva.find({
       estado: { $ne: 'cancelada' },
       $or: [
-        // Caso 1: Reserva existente COMIENZA dentro del rango solicitado
-        // Y no termina antes del inicio (check-out mismo día OK)
+        // 🔥 CASO 1: Reserva existente COMIENZA dentro de mi estadía
+        // Y termina DESPUÉS de que yo comience
         {
           fechaInicio: { 
-            $gte: fechaInicioDate,  // Comienza después o igual al inicio solicitado
-            $lt: fechaFinDate        // Pero antes del fin solicitado
+            $lt: fechaFinDate,      // Comienza antes de que yo termine
+            $gt: fechaInicioDate    // Y después de que yo comience
           }
         },
-        // Caso 2: Reserva existente TERMINA dentro del rango solicitado
-        // Y comienza después del inicio (check-in mismo día OK)
+        // 🔥 CASO 2: Reserva existente TERMINA dentro de mi estadía  
+        // Y comienza ANTES de que yo termine
         {
           fechaFin: { 
-            $gt: fechaInicioDate,    // Termina después del inicio solicitado
-            $lte: fechaFinDate        // Y antes o igual al fin solicitado
+            $gt: fechaInicioDate,    // Termina después de que yo comience
+            $lt: fechaFinDate        // Y antes de que yo termine
           }
         },
-        // Caso 3: Reserva existente ENVUELVE el rango solicitado
+        // 🔥 CASO 3: Reserva existente ENVUELVE mi estadía
         {
-          fechaInicio: { $lt: fechaInicioDate },
-          fechaFin: { $gt: fechaFinDate }
+          fechaInicio: { $lte: fechaInicioDate },
+          fechaFin: { $gte: fechaFinDate }
+        },
+        // 🔥 CASO 4: Reserva existente comienza el MISMO día que yo (check-in mismo día)
+        {
+          fechaInicio: fechaInicioDate
         }
       ]
     }).select('cabana fechaInicio fechaFin').lean();
 
-    console.log(`📅 ${reservasEnRango.length} reservas que podrían causar conflicto:`);
+    console.log(`📅 ${reservasEnRango.length} reservas conflictivas encontradas:`);
     reservasEnRango.forEach((reserva, index) => {
-      const inicio = new Date(reserva.fechaInicio).toISOString().split('T')[0];
-      const fin = new Date(reserva.fechaFin).toISOString().split('T')[0];
-      console.log(`   ${index + 1}. Cabana: ${reserva.cabana} | ${inicio} a ${fin}`);
+      const inicio = new Date(reserva.fechaInicio);
+      const fin = new Date(reserva.fechaFin);
+      inicio.setHours(0, 0, 0, 0);
+      fin.setHours(0, 0, 0, 0);
+      
+      console.log(`   ${index + 1}. Cabana: ${reserva.cabana}`);
+      console.log(`       Reserva: ${inicio.toISOString().split('T')[0]} a ${fin.toISOString().split('T')[0]}`);
+      console.log(`       Mi reserva: ${fechaInicioDate.toISOString().split('T')[0]} a ${fechaFinDate.toISOString().split('T')[0]}`);
+      
+      // Explicar por qué es conflicto
+      if (inicio.getTime() === fechaInicioDate.getTime()) {
+        console.log(`       → CONFLICTO: Check-in mismo día`);
+      } else if (inicio < fechaFinDate && inicio > fechaInicioDate) {
+        console.log(`       → CONFLICTO: Comienza durante mi estadía`);
+      } else if (fin > fechaInicioDate && fin < fechaFinDate) {
+        console.log(`       → CONFLICTO: Termina durante mi estadía`);
+      } else if (inicio <= fechaInicioDate && fin >= fechaFinDate) {
+        console.log(`       → CONFLICTO: Envuelve mi estadía`);
+      }
     });
 
     // 🔥 IDs de cabañas OCUPADAS
@@ -791,16 +819,6 @@ export const getCabanasDisponibles = async (req, res) => {
     });
 
     console.log(`🚫 Cabañas ocupadas IDs:`, Array.from(cabanasOcupadasIds));
-
-    // 🔥 FILTRAR DISPONIBLES
-    const cabanasDisponibles = todasLasCabanas.filter(cabana => 
-      !cabanasOcupadasIds.has(cabana._id.toString())
-    );
-
-    console.log(`✅ ${cabanasDisponibles.length} cabañas disponibles de ${todasLasCabanas.length}:`);
-    cabanasDisponibles.forEach(cabana => {
-      console.log(`   - ${cabana.nombre} (${cabana._id})`);
-    });
 
     // 🔥 VERIFICACIÓN ESPECÍFICA
     const cabanaTroncos = todasLasCabanas.find(c => 
@@ -813,27 +831,40 @@ export const getCabanasDisponibles = async (req, res) => {
     if (cabanaTroncos) {
       const ocupada = cabanasOcupadasIds.has(cabanaTroncos._id.toString());
       console.log(`🔍 Cabaña de Troncos (${cabanaTroncos._id}): ${ocupada ? 'OCUPADA ❌' : 'DISPONIBLE ✅'}`);
+      
+      // Buscar reserva específica que causa conflicto
       if (ocupada) {
-        console.log(`   Razón: Está en la lista de ocupadas`);
+        const reservaConflicto = reservasEnRango.find(r => 
+          r.cabana.toString() === cabanaTroncos._id.toString()
+        );
+        if (reservaConflicto) {
+          const inicioRes = new Date(reservaConflicto.fechaInicio).toISOString().split('T')[0];
+          const finRes = new Date(reservaConflicto.fechaFin).toISOString().split('T')[0];
+          console.log(`   Reserva conflictiva: ${inicioRes} a ${finRes}`);
+        }
       }
-    } else {
-      console.log('⚠️ Cabaña de Troncos NO encontrada en DB');
     }
 
     if (cabanaNormanda) {
       const ocupada = cabanasOcupadasIds.has(cabanaNormanda._id.toString());
       console.log(`🔍 cabaña Normanda (${cabanaNormanda._id}): ${ocupada ? 'OCUPADA ❌' : 'DISPONIBLE ✅'}`);
-      if (ocupada) {
-        console.log(`   Razón: Está en la lista de ocupadas`);
-      }
-    } else {
-      console.log('⚠️ cabaña Normanda NO encontrada en DB');
     }
+
+    // 🔥 FILTRAR DISPONIBLES
+    const cabanasDisponibles = todasLasCabanas.filter(cabana => 
+      !cabanasOcupadasIds.has(cabana._id.toString())
+    );
+
+    console.log(`✅ ${cabanasDisponibles.length} cabañas disponibles de ${todasLasCabanas.length}:`);
+    cabanasDisponibles.forEach(cabana => {
+      console.log(`   - ${cabana.nombre} (${cabana._id})`);
+    });
 
     // 🔥 FORMATO DE RESPUESTA
     const API_URL = process.env.API_URL || 'http://localhost:5000';
     
     const cabanasFormateadas = cabanasDisponibles.map(cabana => {
+      // ... (mantén el mismo código de formato de imágenes)
       let imagenPrincipal = `${API_URL}/default-cabana.jpg`;
       
       if (cabana.imagenPrincipal) {
@@ -855,23 +886,6 @@ export const getCabanasDisponibles = async (req, res) => {
           }
         } else if (cabana.imagenPrincipal._id) {
           imagenPrincipal = `${API_URL}/api/images/${cabana.imagenPrincipal._id}`;
-        }
-      } else if (cabana.imagenes && cabana.imagenes.length > 0) {
-        const primeraImagen = cabana.imagenes[0];
-        if (typeof primeraImagen === 'string') {
-          if (primeraImagen.startsWith('http')) {
-            imagenPrincipal = primeraImagen;
-          } else {
-            imagenPrincipal = `${API_URL}/${primeraImagen}`;
-          }
-        } else if (primeraImagen.url) {
-          if (primeraImagen.url.startsWith('http')) {
-            imagenPrincipal = primeraImagen.url;
-          } else {
-            imagenPrincipal = `${API_URL}${primeraImagen.url}`;
-          }
-        } else if (primeraImagen._id) {
-          imagenPrincipal = `${API_URL}/api/images/${primeraImagen._id}`;
         }
       }
 
@@ -900,11 +914,18 @@ export const getCabanasDisponibles = async (req, res) => {
       },
       debug: {
         totalCabanasEnDB: todasLasCabanas.length,
-        cabanasEnDB: todasLasCabanas.map(c => ({ nombre: c.nombre, id: c._id })),
+        fechasSolicitadas: {
+          inicio: fechaInicioDate.toISOString(),
+          fin: fechaFinDate.toISOString()
+        },
+        reservasConflictivas: reservasEnRango.map(r => ({
+          cabana: r.cabana,
+          inicio: new Date(r.fechaInicio).toISOString(),
+          fin: new Date(r.fechaFin).toISOString()
+        })),
         cabanasOcupadas: Array.from(cabanasOcupadasIds),
         cabanasDisponibles: cabanasDisponibles.map(c => ({ nombre: c.nombre, id: c._id })),
-        logica: `Rango solicitado: ${fechaInicioDate.toISOString().split('T')[0]} a ${fechaFinDate.toISOString().split('T')[0]}`,
-        consulta: `Reservas conflictivas: fechaInicio >= ${fechaInicioDate.toISOString()} Y fechaInicio < ${fechaFinDate.toISOString()} O fechaFin > ${fechaInicioDate.toISOString()} Y fechaFin <= ${fechaFinDate.toISOString()}`
+        logica: 'CONFLICTO si: (A < Y Y B > X) donde A=inicio reserva existente, B=fin reserva existente, X=mi check-in, Y=mi check-out'
       }
     });
 
