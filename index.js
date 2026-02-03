@@ -39,7 +39,8 @@ const corsOptions = {
       'http://localhost:3000',  // Desarrollo local
       'https://cabanafront.vercel.app',
       'https://complejolosalerces-git-primeraramafront-kunandoleivas-projects.vercel.app',
-      'https://complejolosalerces.vercel.app'
+      'https://complejolosalerces.vercel.app',
+      'http://localhost:5000'
     ];
     
     // Permitir peticiones sin origen (como desde Postman)
