@@ -761,34 +761,6 @@ export const getCabanasDisponibles = async (req, res) => {
 
     console.log(`📊 Reservas REALMENTE conflictivas encontradas: ${reservasEnRango.length}`);
     
-    // 🔥 DEBUG MEJORADO
-    if (reservasEnRango.length > 0) {
-      console.log('🔍 Detalles de reservas REALMENTE conflictivas:');
-      reservasEnRango.forEach((reserva, i) => {
-        const inicio = new Date(reserva.fechaInicio);
-        const fin = new Date(reserva.fechaFin);
-        const cabanaId = reserva.cabana.toString();
-        
-        console.log(`   ${i + 1}. Cabaña ID: ${cabanaId}`);
-        console.log(`      Ocupada del: ${inicio.toISOString()} al ${fin.toISOString()}`);
-        console.log(`      Nuestras fechas: ${fechaInicio} 12:00 PM → ${fechaFin} 10:00 AM`);
-        
-        const conflictoPorFin = fin > fechaInicioDate;
-        const conflictoPorInicio = inicio < fechaFinDate;
-        
-        console.log(`      ¿Fin reserva (${fin.toISOString()}) > nuestro check-in (${fechaInicioDate.toISOString()})?: ${conflictoPorFin ? 'SÍ' : 'NO'}`);
-        console.log(`      ¿Inicio reserva (${inicio.toISOString()}) < nuestro check-out (${fechaFinDate.toISOString()})?: ${conflictoPorInicio ? 'SÍ' : 'NO'}`);
-        console.log(`      ¿AMBAS condiciones?: ${conflictoPorFin && conflictoPorInicio ? '✅ CONFLICTO REAL' : '❌ NO es conflicto'}`);
-      });
-    } else {
-      console.log('✅ ¡Excelente! No hay reservas conflictivas reales.');
-    }
-
-    // Obtener todas las cabañas (simplificado)
-    console.log('🔍 Obteniendo todas las cabañas...');
-    const todasCabanasRaw = await mongoose.connection.db.collection('cabanas').find({}).toArray();
-    console.log(`📄 Encontradas: ${todasCabanasRaw.length} cabañas`);
-
     // 🔥 IDs de cabañas ocupadas
     const cabanasOcupadasIds = new Set();
     reservasEnRango.forEach((reserva) => {
@@ -797,47 +769,75 @@ export const getCabanasDisponibles = async (req, res) => {
 
     console.log(`📋 Cabañas ocupadas: ${Array.from(cabanasOcupadasIds).length}`);
 
-    // 🔥 Filtrar cabañas disponibles
+    // 🔥 Obtener todas las cabañas con imágenes (sin filtrar por ocupadas aquí)
+    console.log('🔍 Obteniendo todas las cabañas...');
+    const todasCabanasRaw = await mongoose.connection.db.collection('cabanas').find({}).toArray();
+    console.log(`📄 Encontradas: ${todasCabanasRaw.length} cabañas`);
+
+    // 🔥 Filtrar cabañas disponibles y procesar imágenes
     const cabanasDisponibles = todasCabanasRaw
-      .filter(doc => {
-        const id = doc._id.toString();
-        const estaOcupada = cabanasOcupadasIds.has(id);
-        if (!estaOcupada) {
-          console.log(`   ✅ ${doc.nombre || 'Sin nombre'} (${id}) → DISPONIBLE`);
-        }
-        return !estaOcupada;
-      })
+      .filter(doc => !cabanasOcupadasIds.has(doc._id.toString()))
       .map(doc => {
+        // 🔥 LÓGICA SIMPLIFICADA DE IMÁGENES (tomada del primer código)
         const API_URL = process.env.API_URL || 'http://localhost:5000';
+        
+        // Buscar imagen principal
         let imagenPrincipal = `${API_URL}/default-cabana.jpg`;
         
-        if (doc.imagenPrincipal) {
-          if (typeof doc.imagenPrincipal === 'string') {
-            imagenPrincipal = doc.imagenPrincipal.startsWith('http') 
-              ? doc.imagenPrincipal 
-              : `${API_URL}${doc.imagenPrincipal.startsWith('/') ? '' : '/'}${doc.imagenPrincipal}`;
-          } else if (doc.imagenPrincipal._id) {
-            imagenPrincipal = `${API_URL}/api/images/${doc.imagenPrincipal._id}`;
+        // 1. Si hay campo 'images' (array con documentos de imágenes)
+        if (doc.images && Array.isArray(doc.images) && doc.images.length > 0) {
+          // Tomar la primera imagen que tenga URL
+          const primeraImagen = doc.images.find(img => img && img.url);
+          if (primeraImagen) {
+            imagenPrincipal = primeraImagen.url;
           }
+        }
+        // 2. Si hay campo 'imagenPrincipal' (string)
+        else if (doc.imagenPrincipal) {
+          imagenPrincipal = doc.imagenPrincipal;
+        }
+        
+        // 🔥 Asegurar que la URL sea completa
+        if (!imagenPrincipal.startsWith('http')) {
+          imagenPrincipal = `${API_URL}${imagenPrincipal.startsWith('/') ? '' : '/'}${imagenPrincipal}`;
+        }
+
+        // Extraer todas las imágenes si existen
+        const imagenes = [];
+        if (doc.images && Array.isArray(doc.images)) {
+          doc.images.forEach(img => {
+            if (img && img.url) {
+              let url = img.url;
+              if (!url.startsWith('http')) {
+                url = `${API_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+              }
+              imagenes.push({
+                url: url,
+                filename: img.filename || 'imagen.jpg'
+              });
+            }
+          });
         }
 
         return {
           _id: doc._id,
           nombre: doc.nombre || 'Cabaña sin nombre',
+          descripcion: doc.descripcion || '',
           capacidad: doc.capacidad || 2,
           precio: doc.precio || 0,
-          descripcion: doc.descripcion || '',
           servicios: Array.isArray(doc.servicios) ? doc.servicios : [],
           comodidades: Array.isArray(doc.comodidades) ? doc.comodidades : [],
           imagenPrincipal: imagenPrincipal,
-          imagenes: Array.isArray(doc.imagenes) ? doc.imagenes : [],
-          disponible: true
+          imagenes: imagenes, // Todas las imágenes
+          disponible: true,
+          createdAt: doc.createdAt,
+          updatedAt: doc.updatedAt
         };
       });
 
     console.log(`🎉 RESULTADO FINAL: ${cabanasDisponibles.length} cabañas disponibles de ${todasCabanasRaw.length} totales`);
 
-    // 🔥 Respuesta simplificada (sin debug extenso)
+    // 🔥 Respuesta simplificada
     res.status(200).json({
       success: true,
       count: cabanasDisponibles.length,
