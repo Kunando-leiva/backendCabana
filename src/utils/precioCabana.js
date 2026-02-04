@@ -1,4 +1,4 @@
-// src/utils/precioCabana.js - VERSIÓN COMPLETA
+// src/utils/precioCabana.js - VERSIÓN ACTUALIZADA
 
 const feriadosArgentina2025 = [
   "2026-01-01", // Año Nuevo
@@ -58,20 +58,32 @@ function obtenerTipoDia(fecha) {
   return 'semana'; // Lunes a Viernes = día de semana
 }
 
-// Calcular precio por NOCHE (no por día)
+// Calcular precio por NOCHE (no por día) - ACTUALIZADO
 function calcularPrecioPorNoche(fecha) {
   const tipo = obtenerTipoDia(fecha);
+  const fechaArg = crearFechaArgentina(fecha);
+  const diaSemana = fechaArg.getDay(); // 0=domingo, 1=lunes, ..., 6=sábado
   
-  switch (tipo) {
-    case 'feriado':
-      return 200000; // Feriados
-    case 'fin de semana':
-      return 180000; // Sábado y Domingo
-    case 'semana':
-      return 150000; // Lunes a Viernes
-    default:
-      return 150000;
+  // Si es feriado, precio especial
+  if (tipo === 'feriado') {
+    return 250000; // Feriados: $250.000
   }
+  
+  // Evaluar por día de la semana específico
+  if (diaSemana === 5) { // 5 = Viernes
+    return 200000; // Viernes: $200.000
+  }
+  
+  if (diaSemana === 6) { // 6 = Sábado
+    return 220000; // Sábados: $220.000
+  }
+  
+  if (diaSemana === 0) { // 0 = Domingo
+    return 200000; // Domingo: $200.000
+  }
+  
+  // Lunes (1), Martes (2), Miércoles (3), Jueves (4)
+  return 180000; // Lunes a Jueves: $180.000
 }
 
 // Calcular precio total por NOCHEs (corregido)
@@ -128,12 +140,27 @@ function obtenerDesglosePrecios(fechaInicio, fechaFin) {
     const diaSemana = fechaActual.getDay();
     const tipo = obtenerTipoDia(fechaActual);
     
+    // Determinar categoría específica para mostrar
+    let categoria = tipo;
+    if (tipo !== 'feriado') {
+      if (diaSemana >= 1 && diaSemana <= 4) { // Lunes a Jueves
+        categoria = 'Lunes a Jueves';
+      } else if (diaSemana === 5) { // Viernes
+        categoria = 'Viernes';
+      } else if (diaSemana === 6) { // Sábado
+        categoria = 'Sábado';
+      } else if (diaSemana === 0) { // Domingo
+        categoria = 'Domingo';
+      }
+    }
+    
     desglose.push({
       fecha: fechaActual.toISOString().split('T')[0],
       diaSemana: diaSemana,
       diaNombre: nombresDias[diaSemana],
       precio: precioNoche,
       tipo: tipo,
+      categoria: categoria,
       nocheNumero: i + 1
     });
     
@@ -149,18 +176,43 @@ function obtenerDesglosePrecios(fechaInicio, fechaFin) {
   };
 }
 
-// Función auxiliar para contar tipos de noches
+// Función auxiliar para contar tipos de noches - ACTUALIZADA
 function contarNochesPorTipo(desglose) {
-  return {
-    semana: desglose.filter(d => d.tipo === 'semana').length,
-    finDeSemana: desglose.filter(d => d.tipo === 'fin de semana').length,
-    feriado: desglose.filter(d => d.tipo === 'feriado').length
+  const conteo = {
+    'Lunes a Jueves': 0,
+    'Viernes': 0,
+    'Sábado': 0,
+    'Domingo': 0,
+    'Feriado': 0
   };
+  
+  desglose.forEach(item => {
+    if (item.tipo === 'feriado') {
+      conteo['Feriado']++;
+    } else {
+      switch (item.diaSemana) {
+        case 1: case 2: case 3: case 4: // Lunes a Jueves
+          conteo['Lunes a Jueves']++;
+          break;
+        case 5: // Viernes
+          conteo['Viernes']++;
+          break;
+        case 6: // Sábado
+          conteo['Sábado']++;
+          break;
+        case 0: // Domingo
+          conteo['Domingo']++;
+          break;
+      }
+    }
+  });
+  
+  return conteo;
 }
 
-// Función para generar resumen (opcional)
+// Función para generar resumen (opcional) - ACTUALIZADA
 function generarResumenPrecio(fechaInicio, fechaFin) {
-  const { desglose, precioTotal, totalNoches } = obtenerDesglosePrecios(fechaInicio, fechaFin);
+  const { desglose, precioTotal, totalNoches, checkIn, checkOut } = obtenerDesglosePrecios(fechaInicio, fechaFin);
   const conteo = contarNochesPorTipo(desglose);
   
   const formatoArgentino = new Intl.NumberFormat('es-AR', {
@@ -176,8 +228,15 @@ function generarResumenPrecio(fechaInicio, fechaFin) {
     precioTotalFormateado: formatoArgentino.format(precioTotal),
     desglosePorTipo: conteo,
     desgloseCompleto: desglose,
-    checkIn: fechaInicio.toISOString().split('T')[0],
-    checkOut: fechaFin.toISOString().split('T')[0]
+    checkIn: checkIn,
+    checkOut: checkOut,
+    tarifas: {
+      'Lunes a Jueves': 180000,
+      'Viernes': 200000,
+      'Sábado': 220000,
+      'Domingo': 200000,
+      'Feriado': 250000
+    }
   };
 }
 
