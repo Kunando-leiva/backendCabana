@@ -8,64 +8,81 @@ import {
     listarCabanasDisponibles,
     obtenerImagenesCabana,
     asociarImagenes,
-    obtenerTodasImagenes
-
+    obtenerTodasImagenes,
+    agregarImagenesACabana,
+    eliminarImagenCabana,
+    reordenarImagenesCabana
 } from '../controllers/cabanaController.js';
 import { auth, isAdmin } from '../middlewares/auth.js';
 import { upload } from '../utils/multerConfig.js';
-import { procesarImagenes } from '../utils/imageMiddleware.js';
 import { API_URL } from '../../config/config.js';
-import { handleGridFSUpload } from '../utils/multerConfig.js';
-import { uploadImage } from '../controllers/imageController.js';
+import Cabana from '../models/Cabana.js';
+import Image from '../models/Image.js';
 import mongoose from 'mongoose';
 
 const router = express.Router();
 
+// Middleware de diagnóstico
+const debugMiddleware = (req, res, next) => {
+  console.log('🔍 DEBUG - Ruta:', req.path);
+  console.log('📦 Body keys:', Object.keys(req.body));
+  console.log('📁 Files count:', req.files?.length || 0);
+  
+  if (req.body.imagesToKeep) {
+    console.log('📌 imagesToKeep (raw):', req.body.imagesToKeep);
+    console.log('📌 Tipo:', typeof req.body.imagesToKeep);
+  }
+  
+  if (req.body.imagesToDelete) {
+    console.log('🗑️ imagesToDelete (raw):', req.body.imagesToDelete);
+    console.log('🗑️ Tipo:', typeof req.body.imagesToDelete);
+  }
+  
+  next();
+};
+
 // Middlewares reutilizables
 const adminAuth = [auth, isAdmin];
-const imageUpload = [...adminAuth, upload.array('images', 5), procesarImagenes];
 
 // --- Rutas Públicas ---
 router.get('/', listarCabanas);
 router.get('/disponibles', listarCabanasDisponibles);
-router.get('/', obtenerTodasImagenes);
-router.get('/:id', 
-  // Validación de ID
-  async (req, res, next) => {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(400).json({ 
-        success: false,
-        error: 'ID de cabaña no válido' 
-      });
-    }
-    next();
-  },
-  verCabana
-);
+router.get('/images/all', obtenerTodasImagenes);
+
+// Validación de ID
+const validateObjectId = (req, res, next) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ 
+      success: false,
+      error: 'ID no válido' 
+    });
+  }
+  next();
+};
+
+router.get('/:id', validateObjectId, verCabana);
+
 // Ruta para imágenes de cabaña
-router.get('/:id/images',
-  async (req, res, next) => {
-    console.log('Solicitud de imágenes para cabaña ID:', req.params.id);
-    next();
-  },
-  obtenerImagenesCabana
-);
+router.get('/:id/images', validateObjectId, obtenerImagenesCabana);
 
 // --- Rutas Protegidas ---
 router.post('/', 
-    auth,
-    isAdmin,
-    upload.array('images', 5), // Acepta hasta 5 imágenes
-    crearCabana
+  auth,
+  isAdmin,
+  upload.array('images', 5),
+  crearCabana
 );
+
+// ✅ RUTA PRINCIPAL DE ACTUALIZACIÓN (usa actualizarCabana corregido)
 router.put('/:id', 
   auth,
   isAdmin,
-  upload.array('newImages', 10), // Acepta hasta 10 nuevas imágenes
+  upload.array('newImages', 10),
+  debugMiddleware, // Opcional: quitar en producción
   actualizarCabana
 );
 
-//Ruta para eliminar una imagen específica de una cabaña
+// Ruta para eliminar una imagen específica de una cabaña
 router.delete('/:cabanaId/images/:imageId',
   auth,
   isAdmin,
@@ -73,10 +90,18 @@ router.delete('/:cabanaId/images/:imageId',
     try {
       const { cabanaId, imageId } = req.params;
       
-      // Importar el controlador (ajusta la ruta según tu estructura)
-      const { eliminarImagenCabana } = await import('../controllers/cabanaController.js');
+      // Validar IDs
+      if (!mongoose.Types.ObjectId.isValid(cabanaId) || !mongoose.Types.ObjectId.isValid(imageId)) {
+        return res.status(400).json({
+          success: false,
+          error: 'IDs no válidos'
+        });
+      }
+      
+      // Llamar función del controlador
       return eliminarImagenCabana(req, res);
     } catch (error) {
+      console.error('Error en ruta eliminar imagen:', error);
       res.status(500).json({
         success: false,
         error: 'Error al procesar solicitud'
@@ -85,45 +110,43 @@ router.delete('/:cabanaId/images/:imageId',
   }
 );
 
-// Ruta para agregar imágenes a una cabaña existente (sin eliminar las actuales)
+// ✅ RUTA MEJORADA PARA AGREGAR IMÁGENES
 router.post('/:id/agregar-imagenes',
   auth,
   isAdmin,
-  upload.array('images', 5),
+  debugMiddleware, // Opcional: para diagnóstico
+  upload.array('images', 10),
   async (req, res) => {
     try {
-      // Importar el controlador
-      const { agregarImagenesACabana } = await import('../controllers/cabanaController.js');
+      console.log('📤 Ruta /agregar-imagenes llamada');
+      console.log('📊 Datos recibidos:', {
+        cabanaId: req.params.id,
+        filesCount: req.files?.length || 0,
+        body: req.body
+      });
       
-      // Crear un req modificado
-      const modifiedReq = {
-        ...req,
-        params: { id: req.params.id },
-        body: { 
-          ...req.body,
-          imagesToKeep: JSON.parse(req.body.imagesToKeep || '[]') 
-        }
-      };
-      
-      return agregarImagenesACabana(modifiedReq, res);
+      // Llamar función del controlador
+      return agregarImagenesACabana(req, res);
     } catch (error) {
-      res.status(400).json({
+      console.error('❌ Error en ruta agregar-imagenes:', error);
+      res.status(500).json({
         success: false,
-        error: error.message
+        error: 'Error interno del servidor',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
   }
 );
 
+// Ruta para reordenar imágenes
 router.patch('/:id/reordenar-imagenes',
   auth,
   isAdmin,
   async (req, res) => {
     try {
-      // Importar dinámicamente para evitar dependencias circulares
-      const { reordenarImagenesCabana } = await import('../controllers/cabanaController.js');
       return reordenarImagenesCabana(req, res);
     } catch (error) {
+      console.error('Error en ruta reordenar-imagenes:', error);
       res.status(500).json({
         success: false,
         error: 'Error al procesar solicitud'
@@ -132,18 +155,8 @@ router.patch('/:id/reordenar-imagenes',
   }
 );
 
-
-
+// Eliminar cabaña completa
 router.delete('/:id', adminAuth, eliminarCabana);
-router.patch('/:id/imagenes', adminAuth, asociarImagenes);
-
-router.post(
-    '/:id/imagen',
-    auth,
-    upload.single('imagen'),
-    handleGridFSUpload,
-    uploadImage
-  );
 
 // Ruta optimizada para imagen principal
 router.get('/:id/imagen-principal', async (req, res) => {
@@ -182,62 +195,6 @@ router.get('/:id/imagen-principal', async (req, res) => {
             details: API_URL === 'development' ? error.message : undefined
         });
     }
-});
-
-// Obtener todas las imágenes con opción de filtrar por cabaña
-router.get('/images/all', async (req, res) => {
-  try {
-    // Opción 1: Obtener imágenes a través de las cabañas
-    const cabanas = await Cabana.find()
-      .populate({
-        path: 'images',
-        select: 'url filename size createdAt',
-        match: { isPublic: true }
-      })
-      .lean();
-
-    let images = [];
-    cabanas.forEach(cabana => {
-      if (cabana.images && cabana.images.length > 0) {
-        images = [
-          ...images,
-          ...cabana.images.map(img => ({
-            ...img,
-            cabanaId: cabana._id,
-            cabanaNombre: cabana.nombre
-          }))
-        ];
-      }
-    });
-
-    // Opción 2: Si no hay imágenes en cabañas, obtener directamente
-    if (images.length === 0) {
-      images = await Image.find({ isPublic: true })
-        .select('url filename size createdAt')
-        .lean();
-    }
-
-    // Formatear URLs
-    const formattedImages = images.map(img => ({
-      ...img,
-      url: img.url?.startsWith('http') 
-        ? img.url 
-        : `${API_URL}${img.url?.startsWith('/') ? '' : '/'}${img.url}`
-    }));
-
-    res.status(200).json({
-      success: true,
-      count: formattedImages.length,
-      data: formattedImages
-    });
-  } catch (error) {
-    console.error('Error en /images/all:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error al obtener imágenes',
-      details: API_URL === 'development' ? error.message : undefined
-    });
-  }
 });
 
 export default router;

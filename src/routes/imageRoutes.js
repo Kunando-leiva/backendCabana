@@ -84,4 +84,43 @@ router.post('/bulk-urls', async (req, res) => {
   }
 });
 
+
+// En tus rutas, agrega:
+router.get('/diagnostico/imagenes/:cabanaId', auth, isAdmin, async (req, res) => {
+  try {
+    const cabana = await Cabana.findById(req.params.cabanaId)
+      .populate('images')
+      .lean();
+    
+    const gridfsFiles = await mongoose.connection.db.collection('images.files')
+      .find({})
+      .toArray();
+    
+    res.json({
+      cabana: {
+        id: cabana._id,
+        nombre: cabana.nombre,
+        totalImagenes: cabana.images?.length || 0,
+        imagenes: cabana.images?.map(img => ({
+          id: img._id,
+          fileId: img.fileId,
+          filename: img.filename,
+          url: img.url
+        }))
+      },
+      gridfs: {
+        totalArchivos: gridfsFiles.length,
+        archivos: gridfsFiles.map(f => ({
+          id: f._id,
+          filename: f.filename,
+          length: f.length,
+          uploadDate: f.uploadDate
+        }))
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;

@@ -29,11 +29,11 @@ export const upload = multer({
   fileFilter,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB
-    files: 5 // Máximo 5 archivos
+    files: 10 // Máximo 10 archivos
   }
 });
 
-// Middleware mejorado para GridFS
+// Middleware para GridFS
 export const handleGridFSUpload = async (req, res, next) => {
   if (!req.file) {
     console.log('Debug - Archivo recibido en GridFS:', req.file);
@@ -57,7 +57,6 @@ export const handleGridFSUpload = async (req, res, next) => {
         uploadedBy: req.user._id,
         mimeType: req.file.mimetype,
         size: req.file.size
-        
       }
     });
 
@@ -80,7 +79,7 @@ export const handleGridFSUpload = async (req, res, next) => {
     res.status(500).json({ 
       success: false,
       error: 'Error al subir a GridFS',
-      details: API_URL === 'development' ? error.message : undefined
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   } finally {
     session.endSession();
