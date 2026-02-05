@@ -257,12 +257,32 @@ export const actualizarCabana = async (req, res) => {
             console.log(`🆕 Nueva imagen subida: ${savedImage._id}`);
         }
 
-        // 4. CONSTRUIR ARRAY FINAL
+        // 4. CONSTRUIR ARRAY FINAL - ¡¡ESTA ES LA CORRECCIÓN!!
+        console.log('🔍 Estado actual de la cabaña:', {
+            imagenesActuales: cabanaActual.images.length,
+            imagesToKeepRecibidos: imagesToKeepArray.length,
+            nuevasImagenes: nuevasImagenesIds.length
+        });
+
+        // OPCIÓN A: Si imagesToKeep está vacío, usar todas las imágenes actuales
+        if (imagesToKeepArray.length === 0) {
+            console.log('ℹ️ imagesToKeep vacío - usando todas las imágenes actuales');
+            imagesToKeepArray = cabanaActual.images.map(img => img.toString());
+        }
+
+        // Filtrar imágenes válidas
         const imagenesConservadas = imagesToKeepArray
             .filter(imgId => mongoose.Types.ObjectId.isValid(imgId))
             .map(imgId => new mongoose.Types.ObjectId(imgId));
 
+        // Combinar: imágenes conservadas + nuevas imágenes
         const imagenesFinales = [...imagenesConservadas, ...nuevasImagenesIds];
+
+        console.log('📊 Resultado final:', {
+            conservadas: imagenesConservadas.length,
+            nuevas: nuevasImagenesIds.length,
+            total: imagenesFinales.length
+        });
 
         // 5. ACTUALIZAR CABAÑA
         const updateData = {
