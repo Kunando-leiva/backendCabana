@@ -58,7 +58,82 @@ router.post('/',
     upload.array('images', 5), // Acepta hasta 5 imágenes
     crearCabana
 );
-router.put('/:id', imageUpload, actualizarCabana);
+router.put('/:id', 
+  auth,
+  isAdmin,
+  upload.array('newImages', 10), // Acepta hasta 10 nuevas imágenes
+  actualizarCabana
+);
+
+//Ruta para eliminar una imagen específica de una cabaña
+router.delete('/:cabanaId/images/:imageId',
+  auth,
+  isAdmin,
+  async (req, res) => {
+    try {
+      const { cabanaId, imageId } = req.params;
+      
+      // Importar el controlador (ajusta la ruta según tu estructura)
+      const { eliminarImagenCabana } = await import('../controllers/cabanaController.js');
+      return eliminarImagenCabana(req, res);
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: 'Error al procesar solicitud'
+      });
+    }
+  }
+);
+
+// Ruta para agregar imágenes a una cabaña existente (sin eliminar las actuales)
+router.post('/:id/agregar-imagenes',
+  auth,
+  isAdmin,
+  upload.array('images', 5),
+  async (req, res) => {
+    try {
+      // Importar el controlador
+      const { agregarImagenesACabana } = await import('../controllers/cabanaController.js');
+      
+      // Crear un req modificado
+      const modifiedReq = {
+        ...req,
+        params: { id: req.params.id },
+        body: { 
+          ...req.body,
+          imagesToKeep: JSON.parse(req.body.imagesToKeep || '[]') 
+        }
+      };
+      
+      return agregarImagenesACabana(modifiedReq, res);
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+
+router.patch('/:id/reordenar-imagenes',
+  auth,
+  isAdmin,
+  async (req, res) => {
+    try {
+      // Importar dinámicamente para evitar dependencias circulares
+      const { reordenarImagenesCabana } = await import('../controllers/cabanaController.js');
+      return reordenarImagenesCabana(req, res);
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: 'Error al procesar solicitud'
+      });
+    }
+  }
+);
+
+
+
 router.delete('/:id', adminAuth, eliminarCabana);
 router.patch('/:id/imagenes', adminAuth, asociarImagenes);
 

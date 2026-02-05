@@ -115,105 +115,184 @@ export const crearCabana = async (req, res) => {
 };
 
 // Actualizar cabaña con manejo transaccional mejorado
+// En controllers/cabanaController.js - REEMPLAZA la función actualizarCabana
+// REEMPLAZA LA FUNCIÓN actualizarCabana EXISTENTE con esta:
+
 export const actualizarCabana = async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
-  
+
     try {
-      const { id } = req.params;
-      const { nombre, descripcion, precio, capacidad, servicios, images: imagenesNuevas = [] } = req.body;
-  
-      // Validar IDs de imágenes
-      const validImageIds = imagenesNuevas
-        .filter(id => mongoose.Types.ObjectId.isValid(id))
-        .map(id => new mongoose.Types.ObjectId(id));
-      
-      if (validImageIds.length !== imagenesNuevas.length) {
-        await session.abortTransaction();
-        return res.status(400).json({ 
-          success: false,
-          error: 'IDs de imagen no válidos' 
+        const { id } = req.params;
+        const { 
+            nombre, 
+            descripcion, 
+            precio, 
+            capacidad, 
+            servicios,
+            imagesToKeep = [],    // IDs de imágenes a CONSERVAR
+            imagesToDelete = []   // IDs de imágenes a ELIMINAR
+        } = req.body;
+
+        const newFiles = req.files || [];  // Nuevas imágenes subidas
+        const userId = req.user._id;
+
+        console.log('📝 Datos recibidos:', {
+            id,
+            imagesToKeep,
+            imagesToDelete,
+            newFiles: newFiles.length
         });
-      }
-  
-      // Obtener cabaña actual
-      const cabanaActual = await Cabana.findById(id).session(session);
-      if (!cabanaActual) {
-        await session.abortTransaction();
-        return res.status(404).json({ 
-          success: false,
-          error: 'Cabaña no encontrada' 
-        });
-      }
-  
-      // Determinar imágenes a remover
-      const imagenesPrevias = cabanaActual.images.map(img => img.toString());
-      const imagenesARemover = imagenesPrevias.filter(img => !imagenesNuevas.includes(img));
-  
-      // Actualizar cabaña
-      const cabanaActualizada = await Cabana.findByIdAndUpdate(
-        id,
-        {
-          nombre,
-          descripcion,
-          precio: Number(precio),
-          capacidad: Number(capacidad),
-          servicios: servicios || [],
-          images: validImageIds,
-          imagenPrincipal: validImageIds[0] || null
-        },
-        { 
-          new: true, 
-          session,
-          populate: {
-            path: 'images',
-            select: 'url filename'
-          }
+
+        // 1. Validar cabaña existe
+        const cabanaActual = await Cabana.findById(id).session(session);
+        if (!cabanaActual) {
+            await session.abortTransaction();
+            return res.status(404).json({ 
+                success: false,
+                error: 'Cabaña no encontrada' 
+            });
         }
-      );
-  
-      // Actualizar referencias de imágenes
-      if (imagenesARemover.length > 0) {
-        await Image.updateMany(
-          { _id: { $in: imagenesARemover } },
-          { $unset: { relatedCabana: "" } },
-          { session }
+
+        // 2. ELIMINAR IMÁGENES SOLICITADAS
+        const imagenesEliminadas = [];
+        if (imagesToDelete && imagesToDelete.length > 0) {
+            const imagesToDeleteIds = imagesToDelete
+                .filter(imgId => mongoose.Types.ObjectId.isValid(imgId))
+                .map(imgId => new mongoose.Types.ObjectId(imgId));
+
+            for (const imageId of imagesToDeleteIds) {
+                const imageDoc = await Image.findById(imageId).session(session);
+                if (imageDoc && imageDoc.fileId) {
+                    // Eliminar de GridFS
+                    const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, {
+                        bucketName: 'images'
+                    });
+                    await bucket.delete(imageDoc.fileId);
+                    
+                    // Eliminar documento
+                    await Image.findByIdAndDelete(imageId, { session });
+                    imagenesEliminadas.push(imageId);
+                    
+                    console.log(`🗑️ Imagen eliminada: ${imageId}`);
+                }
+            }
+        }
+
+        // 3. SUBIR NUEVAS IMÁGENES
+        const nuevasImagenesIds = [];
+        for (const file of newFiles) {
+            const uploadStream = gridFSBucket.openUploadStream(file.originalname, {
+                metadata: {
+                    uploadedBy: userId,
+                    mimeType: file.mimetype,
+                    originalName: file.originalname,
+                    size: file.size,
+                    relatedCabana: id
+                }
+            });
+
+            const fileId = await new Promise((resolve, reject) => {
+                uploadStream.on('error', reject);
+                uploadStream.on('finish', () => resolve(uploadStream.id));
+                uploadStream.end(file.buffer);
+            });
+
+            const newImage = new Image({
+                fileId,
+                filename: file.originalname,
+                originalName: file.originalname,
+                mimeType: file.mimetype,
+                size: file.size,
+                uploadedBy: userId,
+                url: `/api/images/${fileId}`,
+                isPublic: true,
+                relatedCabana: id
+            });
+
+            const savedImage = await newImage.save({ session });
+            nuevasImagenesIds.push(savedImage._id);
+            console.log(`🆕 Nueva imagen subida: ${savedImage._id}`);
+        }
+
+        // 4. CONSTRUIR ARRAY FINAL
+        const imagenesConservadas = imagesToKeep
+            .filter(imgId => mongoose.Types.ObjectId.isValid(imgId))
+            .map(imgId => new mongoose.Types.ObjectId(imgId));
+
+        const imagenesFinales = [...imagenesConservadas, ...nuevasImagenesIds];
+
+        // 5. ACTUALIZAR CABAÑA
+        const updateData = {
+            nombre,
+            descripcion,
+            precio: Number(precio),
+            capacidad: Number(capacidad),
+            servicios: servicios || [],
+            images: imagenesFinales,
+            imagenPrincipal: imagenesFinales[0] || null
+        };
+
+        console.log('🔄 Actualizando cabaña con:', updateData);
+
+        const cabanaActualizada = await Cabana.findByIdAndUpdate(
+            id,
+            updateData,
+            { 
+                new: true, 
+                session,
+                populate: {
+                    path: 'images',
+                    select: 'url filename _id fileId'
+                }
+            }
         );
-      }
-  
-      if (validImageIds.length > 0) {
-        await Image.updateMany(
-          { _id: { $in: validImageIds } },
-          { $set: { relatedCabana: id } },
-          { session }
-        );
-      }
-  
-      await session.commitTransaction();
-  
-      // Formatear respuesta con URLs completas
-      const responseData = {
-        ...cabanaActualizada.toObject(),
-        imagenes: cabanaActualizada.images.map(img => ({
-          _id: img._id,
-          url: img.url.startsWith('http') ? img.url : `${API_URL}${img.url}`,
-          filename: img.filename
-        }))
-      };
-  
-      res.json({
-        success: true,
-        data: responseData
-      });
-      
+
+        // 6. ACTUALIZAR REFERENCIAS
+        if (imagenesConservadas.length > 0) {
+            await Image.updateMany(
+                { _id: { $in: imagenesConservadas } },
+                { $set: { relatedCabana: id } },
+                { session }
+            );
+        }
+
+        await session.commitTransaction();
+
+        // 7. RESPUESTA
+        const responseData = {
+            ...cabanaActualizada.toObject(),
+            images: cabanaActualizada.images.map(img => ({
+                _id: img._id,
+                fileId: img.fileId,
+                url: img.url.startsWith('http') ? img.url : `${API_URL}${img.url}`,
+                filename: img.filename,
+                isNew: nuevasImagenesIds.some(newId => newId.equals(img._id))
+            }))
+        };
+
+        res.json({
+            success: true,
+            message: `Cabaña actualizada. ${nuevasImagenesIds.length} nuevas, ${imagenesEliminadas.length} eliminadas`,
+            data: responseData,
+            summary: {
+                conservadas: imagenesConservadas.length,
+                nuevas: nuevasImagenesIds.length,
+                eliminadas: imagenesEliminadas.length,
+                total: imagenesFinales.length
+            }
+        });
+        
     } catch (error) {
-      await session.abortTransaction();
-      res.status(400).json({ 
-        success: false,
-        error: error.message 
-      });
+        await session.abortTransaction();
+        console.error('❌ Error en actualizarCabana:', error);
+        res.status(400).json({ 
+            success: false,
+            error: error.message,
+            details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     } finally {
-      session.endSession();
+        session.endSession();
     }
 };
 
@@ -666,6 +745,289 @@ export const obtenerTodasImagenes = async (req, res) => {
   }
 };
 
+// Función específica para agregar imágenes a cabaña existente
+export const agregarImagenesACabana = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { id } = req.params;
+    const newFiles = req.files || [];
+    const { imagesToKeep = [] } = req.body;
+    const userId = req.user._id;
+
+    // 1. Verificar cabaña existe
+    const cabana = await Cabana.findById(id).session(session);
+    if (!cabana) {
+      await session.abortTransaction();
+      return res.status(404).json({
+        success: false,
+        error: 'Cabaña no encontrada'
+      });
+    }
+
+    // 2. Subir nuevas imágenes
+    const nuevasImagenesIds = [];
+    for (const file of newFiles) {
+      const uploadStream = gridFSBucket.openUploadStream(file.originalname, {
+        metadata: {
+          uploadedBy: userId,
+          mimeType: file.mimetype,
+          originalName: file.originalname,
+          size: file.size,
+          relatedCabana: id
+        }
+      });
+
+      const fileId = await new Promise((resolve, reject) => {
+        uploadStream.on('error', reject);
+        uploadStream.on('finish', () => resolve(uploadStream.id));
+        uploadStream.end(file.buffer);
+      });
+
+      const newImage = new Image({
+        fileId,
+        filename: file.originalname,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+        size: file.size,
+        uploadedBy: userId,
+        url: `/api/images/${fileId}`,
+        isPublic: true,
+        relatedCabana: id
+      });
+
+      const savedImage = await newImage.save({ session });
+      nuevasImagenesIds.push(savedImage._id);
+    }
+
+    // 3. Combinar imágenes existentes (las que se quieren conservar) con nuevas
+    const imagenesConservadas = imagesToKeep
+      .filter(imgId => mongoose.Types.ObjectId.isValid(imgId))
+      .map(imgId => new mongoose.Types.ObjectId(imgId));
+
+    const todasLasImagenes = [...imagenesConservadas, ...nuevasImagenesIds];
+
+    // 4. Actualizar cabaña
+    const cabanaActualizada = await Cabana.findByIdAndUpdate(
+      id,
+      {
+        images: todasLasImagenes,
+        imagenPrincipal: todasLasImagenes[0] || cabana.imagenPrincipal
+      },
+      {
+        new: true,
+        session,
+        populate: {
+          path: 'images',
+          select: 'url filename _id'
+        }
+      }
+    );
+
+    await session.commitTransaction();
+
+    // 5. Preparar respuesta
+    res.json({
+      success: true,
+      message: `Se agregaron ${nuevasImagenesIds.length} nuevas imágenes`,
+      data: {
+        cabanaId: id,
+        totalImagenes: cabanaActualizada.images.length,
+        nuevasImagenes: nuevasImagenesIds,
+        imagenes: cabanaActualizada.images.map(img => ({
+          _id: img._id,
+          url: img.url.startsWith('http') ? img.url : `${API_URL}${img.url}`,
+          filename: img.filename,
+          isNew: nuevasImagenesIds.some(newId => newId.equals(img._id))
+        }))
+      }
+    });
+
+  } catch (error) {
+    await session.abortTransaction();
+    console.error('Error en agregarImagenesACabana:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al agregar imágenes'
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+
+export const eliminarImagenCabana = async (req, res) => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+        const { cabanaId, imageId } = req.params;
+
+        // 1. Verificar que la cabaña existe
+        const cabana = await Cabana.findById(cabanaId).session(session);
+        if (!cabana) {
+            await session.abortTransaction();
+            return res.status(404).json({
+                success: false,
+                error: 'Cabaña no encontrada'
+            });
+        }
+
+        // 2. Verificar que la imagen existe y está asociada a la cabaña
+        const image = await Image.findOne({
+            _id: imageId,
+            relatedCabana: cabanaId
+        }).session(session);
+
+        if (!image) {
+            await session.abortTransaction();
+            return res.status(404).json({
+                success: false,
+                error: 'Imagen no encontrada o no pertenece a esta cabaña'
+            });
+        }
+
+        console.log(`🗑️ Eliminando imagen: ${imageId} de cabaña: ${cabanaId}`);
+
+        // 3. Eliminar de GridFS
+        const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, {
+            bucketName: 'images'
+        });
+        
+        await bucket.delete(image.fileId);
+        console.log(`✅ Eliminada de GridFS: ${image.fileId}`);
+
+        // 4. Eliminar de la colección Image
+        await Image.findByIdAndDelete(imageId, { session });
+        console.log(`✅ Eliminada de colección Image: ${imageId}`);
+
+        // 5. Remover de la cabaña y ajustar imagen principal si es necesario
+        const updatedCabana = await Cabana.findByIdAndUpdate(
+            cabanaId,
+            {
+                $pull: { images: imageId },
+                // Si era la imagen principal, asignar otra o null
+                $set: {
+                    imagenPrincipal: cabana.imagenPrincipal && 
+                                   cabana.imagenPrincipal.equals(imageId) 
+                        ? (cabana.images.length > 1 ? cabana.images[1] : null)
+                        : cabana.imagenPrincipal
+                }
+            },
+            { new: true, session }
+        ).populate({
+            path: 'images',
+            select: 'url filename _id'
+        });
+
+        await session.commitTransaction();
+
+        // 6. Preparar respuesta
+        res.json({
+            success: true,
+            message: 'Imagen eliminada correctamente',
+            data: {
+                cabanaId,
+                imageId,
+                remainingImages: updatedCabana.images.length,
+                imagenesActualizadas: updatedCabana.images.map(img => ({
+                    _id: img._id,
+                    url: img.url.startsWith('http') ? img.url : `${API_URL}${img.url}`,
+                    filename: img.filename
+                })),
+                nuevaImagenPrincipal: updatedCabana.imagenPrincipal
+            }
+        });
+
+    } catch (error) {
+        await session.abortTransaction();
+        console.error('❌ Error eliminando imagen de cabaña:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error al eliminar imagen',
+            details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    } finally {
+        session.endSession();
+    }
+};
+
+// Función para reordenar imágenes de cabaña
+export const reordenarImagenesCabana = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { id } = req.params;
+    const { imageIds } = req.body; // Array ordenado de IDs
+
+    if (!Array.isArray(imageIds)) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        error: 'Se requiere un array de IDs de imágenes'
+      });
+    }
+
+    // Validar que todos los IDs sean válidos
+    const validImageIds = imageIds
+      .filter(imgId => mongoose.Types.ObjectId.isValid(imgId))
+      .map(imgId => new mongoose.Types.ObjectId(imgId));
+
+    if (validImageIds.length !== imageIds.length) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        error: 'Algunos IDs de imagen no son válidos'
+      });
+    }
+
+    // Actualizar cabaña con nuevo orden
+    const cabanaActualizada = await Cabana.findByIdAndUpdate(
+      id,
+      {
+        images: validImageIds,
+        imagenPrincipal: validImageIds[0] || null
+      },
+      {
+        new: true,
+        session,
+        populate: {
+          path: 'images',
+          select: 'url filename _id'
+        }
+      }
+    );
+
+    await session.commitTransaction();
+
+    res.json({
+      success: true,
+      message: 'Imágenes reordenadas correctamente',
+      data: {
+        cabanaId: id,
+        images: cabanaActualizada.images.map((img, index) => ({
+          _id: img._id,
+          url: img.url.startsWith('http') ? img.url : `${API_URL}${img.url}`,
+          filename: img.filename,
+          position: index
+        }))
+      }
+    });
+
+  } catch (error) {
+    await session.abortTransaction();
+    console.error('Error en reordenarImagenesCabana:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al reordenar imágenes'
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
 // Función auxiliar para formatear URLs
 function formatImageUrl(url, imageId) {
   if (!url) return `${API_URL}/api/images/${imageId}`;
@@ -683,5 +1045,9 @@ export default {
     listarCabanasDisponibles,
     getServiciosDisponibles,
     obtenerImagenesCabana,
-    asociarImagenes
+    asociarImagenes,
+    obtenerTodasImagenes,
+    agregarImagenesACabana,     // <-- Asegúrate de exportar
+    eliminarImagenCabana,       // <-- Asegúrate de exportar
+    reordenarImagenesCabana     // <-- Asegúrate de exportar
   };
