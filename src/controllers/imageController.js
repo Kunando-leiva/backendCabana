@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import { gridFSBucket } from '../../config/gridfs-config.js';
 import Image from '../models/Image.js';
 import { API_URL } from '../../config/config.js'
-import  Cabana  from '../models/Cabana.js';
+import Cabana from '../models/Cabana.js';
 
 export const uploadImage = async (req, res) => {
   try {
@@ -76,8 +76,8 @@ export const getImage = async (req, res) => {
     res.set({
       'Content-Type': file.metadata?.mimeType || 'image/jpeg',
       'Content-Disposition': `inline; filename="${file.filename}"`,
-      'Cache-Control': 'public, max-age=31536000, immutable', // Cache de 1 año
-  'ETag': file._id.toString()
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'ETag': file._id.toString()
     });
 
     gridFSBucket.openDownloadStream(objectId).pipe(res);
@@ -90,8 +90,6 @@ export const getImage = async (req, res) => {
   }
 };
 
-// Modifica getGallery así:
-// Modifica getGallery así:
 export const getGallery = async (req, res) => {
   try {
     const { limit = 12, offset = 0 } = req.query;
@@ -114,8 +112,8 @@ export const getGallery = async (req, res) => {
         _id: img._id,
         fileId: img.fileId,
         filename: img.filename,
-        url: img.url, // Asegúrate que esta URL es accesible
-        fullUrl: img.fullUrl, // Usar este campo si está disponible
+        url: img.url,
+        fullUrl: img.fullUrl,
         createdAt: img.createdAt,
         size: img.size,
         uploadedBy: {
@@ -144,72 +142,93 @@ export const getGallery = async (req, res) => {
   }
 };
 
-
-// En imageController.js
+// ✅✅✅ FUNCIÓN deleteImage CORREGIDA - Opción 1
 export const deleteImage = async (req, res) => {
   try {
-    const { docId, fileId } = req.body;
+    // ✅ CAMBIO CRÍTICO: Usar req.params.id en lugar de req.body
+    const { id } = req.params; // Ahora viene de la URL: DELETE /api/images/:id
+    
+    console.log('🗑️ Recibido para eliminar con ID:', id);
 
-    console.log('Recibido para eliminar:', { docId, fileId });
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'ID de imagen no válido' 
+      });
+    }
 
-    // 1. Buscar la imagen usando CUALQUIER ID relevante
+    // 1. Buscar la imagen usando el ID de la URL
     const image = await Image.findOne({
       $or: [
-        { _id: docId },
-        { fileId: fileId },
-        { _id: fileId },
-        { fileId: docId }
+        { _id: new mongoose.Types.ObjectId(id) },
+        { fileId: new mongoose.Types.ObjectId(id) }
       ]
     });
 
     if (!image) {
-      console.log('Imagen no encontrada con estos IDs:', { docId, fileId });
+      console.log('❌ Imagen no encontrada con ID:', id);
       return res.status(404).json({ 
         success: false,
-        error: 'Imagen no encontrada con los IDs proporcionados'
+        error: 'Imagen no encontrada'
       });
     }
 
-    console.log('Imagen encontrada:', {
+    console.log('✅ Imagen encontrada:', {
       _id: image._id,
       fileId: image.fileId,
-      filename: image.filename
+      filename: image.filename,
+      relatedCabana: image.relatedCabana
     });
 
-    // 2. Eliminar de GridFS (usar fileId de la imagen encontrada)
+    // 2. Eliminar de GridFS
     if (image.fileId) {
-      const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, {
-        bucketName: 'uploads'
-      });
-      await bucket.delete(new mongoose.Types.ObjectId(image.fileId));
-      console.log('Archivo eliminado de GridFS con ID:', image.fileId);
+      try {
+        const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, {
+          bucketName: 'images' // Cambié 'uploads' por 'images' para consistencia
+        });
+        await bucket.delete(new mongoose.Types.ObjectId(image.fileId));
+        console.log('✅ Archivo eliminado de GridFS con ID:', image.fileId);
+      } catch (gridfsError) {
+        console.warn('⚠️ Error eliminando de GridFS (puede que ya no exista):', gridfsError.message);
+      }
     }
 
-    // 3. Eliminar el documento de la colección images
+    // 3. Si está asignada a una cabaña, remover la referencia
+    if (image.relatedCabana) {
+      try {
+        await Cabana.findByIdAndUpdate(image.relatedCabana, {
+          $pull: { images: image._id }
+        });
+        console.log('✅ Referencia eliminada de cabaña:', image.relatedCabana);
+      } catch (cabanaError) {
+        console.warn('⚠️ Error actualizando cabaña:', cabanaError.message);
+      }
+    }
+
+    // 4. Eliminar el documento de la colección images
     await Image.findByIdAndDelete(image._id);
-    console.log('Documento eliminado de la colección con ID:', image._id);
+    console.log('✅ Documento eliminado de la colección con ID:', image._id);
 
     res.json({ 
       success: true,
       message: 'Imagen eliminada correctamente',
-      deletedIds: {
-        docId: image._id,
-        fileId: image.fileId
+      deletedImage: {
+        _id: image._id,
+        fileId: image.fileId,
+        filename: image.filename
       }
     });
 
   } catch (error) {
-    console.error('Error en deleteImage:', {
+    console.error('❌ Error en deleteImage:', {
       message: error.message,
       stack: error.stack,
-      receivedIds: req.body
+      id: req.params.id
     });
     res.status(500).json({ 
       success: false,
       error: 'Error al eliminar imagen',
-      details: error.message
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
-
-
