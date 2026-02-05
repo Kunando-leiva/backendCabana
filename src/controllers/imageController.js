@@ -142,13 +142,13 @@ export const getGallery = async (req, res) => {
   }
 };
 
-// ✅✅✅ FUNCIÓN deleteImage CORREGIDA - Opción 1
+// ✅✅✅ VERSIÓN CORREGIDA DE deleteImage
 export const deleteImage = async (req, res) => {
   try {
-    // ✅ CAMBIO CRÍTICO: Usar req.params.id en lugar de req.body
+    // ✅ SOLUCIÓN: Usar req.params.id en lugar de req.body
     const { id } = req.params; // Ahora viene de la URL: DELETE /api/images/:id
     
-    console.log('🗑️ Recibido para eliminar con ID:', id);
+    console.log('🗑️ Eliminando imagen con ID:', id);
 
     if (!id || !mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ 
@@ -157,7 +157,7 @@ export const deleteImage = async (req, res) => {
       });
     }
 
-    // 1. Buscar la imagen usando el ID de la URL
+    // 1. Buscar la imagen usando el ID de params
     const image = await Image.findOne({
       $or: [
         { _id: new mongoose.Types.ObjectId(id) },
@@ -184,12 +184,12 @@ export const deleteImage = async (req, res) => {
     if (image.fileId) {
       try {
         const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, {
-          bucketName: 'images' // Cambié 'uploads' por 'images' para consistencia
+          bucketName: 'images'
         });
         await bucket.delete(new mongoose.Types.ObjectId(image.fileId));
-        console.log('✅ Archivo eliminado de GridFS con ID:', image.fileId);
+        console.log('✅ Archivo eliminado de GridFS:', image.fileId);
       } catch (gridfsError) {
-        console.warn('⚠️ Error eliminando de GridFS (puede que ya no exista):', gridfsError.message);
+        console.warn('⚠️ Error eliminando de GridFS:', gridfsError.message);
       }
     }
 
@@ -207,8 +207,9 @@ export const deleteImage = async (req, res) => {
 
     // 4. Eliminar el documento de la colección images
     await Image.findByIdAndDelete(image._id);
-    console.log('✅ Documento eliminado de la colección con ID:', image._id);
+    console.log('✅ Documento eliminado:', image._id);
 
+    // 5. Responder éxito
     res.json({ 
       success: true,
       message: 'Imagen eliminada correctamente',
@@ -220,11 +221,7 @@ export const deleteImage = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Error en deleteImage:', {
-      message: error.message,
-      stack: error.stack,
-      id: req.params.id
-    });
+    console.error('❌ Error en deleteImage:', error);
     res.status(500).json({ 
       success: false,
       error: 'Error al eliminar imagen',
