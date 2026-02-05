@@ -144,6 +144,45 @@ export const actualizarCabana = async (req, res) => {
             newFiles: newFiles.length
         });
 
+        // ✅✅✅ SOLUCIÓN: Asegurar que sean arrays
+        let imagesToDeleteArray = [];
+        let imagesToKeepArray = [];
+
+        // Manejar imagesToDelete
+        if (imagesToDelete) {
+            if (Array.isArray(imagesToDelete)) {
+                imagesToDeleteArray = imagesToDelete;
+            } else if (typeof imagesToDelete === 'string') {
+                try {
+                    imagesToDeleteArray = JSON.parse(imagesToDelete);
+                } catch (e) {
+                    imagesToDeleteArray = [];
+                }
+            }
+        }
+
+        // Manejar imagesToKeep
+        if (imagesToKeep) {
+            if (Array.isArray(imagesToKeep)) {
+                imagesToKeepArray = imagesToKeep;
+            } else if (typeof imagesToKeep === 'string') {
+                try {
+                    imagesToKeepArray = JSON.parse(imagesToKeep);
+                } catch (e) {
+                    imagesToKeepArray = [];
+                }
+            }
+        }
+
+        // Asegurar que sean arrays
+        if (!Array.isArray(imagesToDeleteArray)) imagesToDeleteArray = [];
+        if (!Array.isArray(imagesToKeepArray)) imagesToKeepArray = [];
+
+        console.log('✅ Arrays procesados:', {
+            imagesToKeepArray,
+            imagesToDeleteArray
+        });
+
         // 1. Validar cabaña existe
         const cabanaActual = await Cabana.findById(id).session(session);
         if (!cabanaActual) {
@@ -154,10 +193,10 @@ export const actualizarCabana = async (req, res) => {
             });
         }
 
-        // 2. ELIMINAR IMÁGENES SOLICITADAS
+        // 2. ELIMINAR IMÁGENES SOLICITADAS - USAR EL ARRAY CORREGIDO
         const imagenesEliminadas = [];
-        if (imagesToDelete && imagesToDelete.length > 0) {
-            const imagesToDeleteIds = imagesToDelete
+        if (imagesToDeleteArray.length > 0) {
+            const imagesToDeleteIds = imagesToDeleteArray
                 .filter(imgId => mongoose.Types.ObjectId.isValid(imgId))
                 .map(imgId => new mongoose.Types.ObjectId(imgId));
 
@@ -215,8 +254,8 @@ export const actualizarCabana = async (req, res) => {
             console.log(`🆕 Nueva imagen subida: ${savedImage._id}`);
         }
 
-        // 4. CONSTRUIR ARRAY FINAL
-        const imagenesConservadas = imagesToKeep
+        // 4. CONSTRUIR ARRAY FINAL - USAR EL ARRAY CORREGIDO
+        const imagenesConservadas = imagesToKeepArray
             .filter(imgId => mongoose.Types.ObjectId.isValid(imgId))
             .map(imgId => new mongoose.Types.ObjectId(imgId));
 
