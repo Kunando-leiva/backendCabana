@@ -780,25 +780,39 @@ export const agregarImagenesACabana = async (req, res) => {
     const newFiles = req.files || [];
     const userId = req.user._id;
 
-    console.log('📤 agregarImagenesACabana - Datos recibidos:', {
-      cabanaId: id,
-      newFilesCount: newFiles.length,
-      body: req.body
-    });
+    console.log('📤 ========== AGREGAR IMÁGENES A CABAÑA ==========');
+    console.log('📌 Cabaña ID:', id);
+    console.log('📁 Archivos recibidos:', newFiles.length);
+    console.log('👤 Usuario ID:', userId);
+    console.log('📦 Body recibido:', req.body);
 
-    // ✅ VALIDACIÓN MEJORADA DE imagesToKeep
+    // ✅ VALIDACIÓN BÁSICA
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({
+        success: false,
+        error: 'ID de cabaña no válido'
+      });
+    }
+
+    // ✅ PROCESAR imagesToKeep
     let imagesToKeep = [];
     if (req.body.imagesToKeep) {
-      console.log('💾 imagesToKeep raw:', req.body.imagesToKeep, '| Tipo:', typeof req.body.imagesToKeep);
+      console.log('💾 imagesToKeep (raw):', req.body.imagesToKeep, '| Tipo:', typeof req.body.imagesToKeep);
       
       try {
         if (typeof req.body.imagesToKeep === 'string') {
+          // Intentar parsear como JSON
           imagesToKeep = JSON.parse(req.body.imagesToKeep);
         } else if (Array.isArray(req.body.imagesToKeep)) {
           imagesToKeep = req.body.imagesToKeep;
+        } else if (typeof req.body.imagesToKeep === 'object') {
+          // Si es objeto, extraer valores
+          imagesToKeep = Object.values(req.body.imagesToKeep);
         }
-      } catch (e) {
-        console.warn('⚠️ Error parsing imagesToKeep:', e);
+      } catch (parseError) {
+        console.warn('⚠️ Error parseando imagesToKeep:', parseError.message);
         imagesToKeep = [];
       }
     }
@@ -808,113 +822,263 @@ export const agregarImagenesACabana = async (req, res) => {
       imagesToKeep = [];
     }
 
-    console.log('✅ ImagesToKeep procesado:', imagesToKeep);
+    console.log('✅ imagesToKeep procesado:', imagesToKeep.length, 'imágenes');
 
-    // 1. Verificar cabaña existe
+    // 1. VERIFICAR CABAÑA EXISTE
+    console.log('🔍 Buscando cabaña:', id);
     const cabana = await Cabana.findById(id).session(session);
     if (!cabana) {
       await session.abortTransaction();
+      session.endSession();
+      console.log('❌ Cabaña no encontrada:', id);
       return res.status(404).json({
         success: false,
         error: 'Cabaña no encontrada'
       });
     }
 
-    // 2. Subir nuevas imágenes
+    console.log('✅ Cabaña encontrada:', cabana.nombre);
+
+    // 2. SUBIR NUEVAS IMÁGENES (si las hay)
     const nuevasImagenesIds = [];
-    for (const file of newFiles) {
-      const uploadStream = gridFSBucket.openUploadStream(file.originalname, {
-        metadata: {
-          uploadedBy: userId,
-          mimeType: file.mimetype,
-          originalName: file.originalname,
-          size: file.size,
-          relatedCabana: id
+    
+    if (newFiles.length > 0) {
+      console.log('📤 Subiendo', newFiles.length, 'nuevas imágenes...');
+      
+      for (let i = 0; i < newFiles.length; i++) {
+        const file = newFiles[i];
+        
+        try {
+          console.log(`📁 Procesando archivo ${i + 1}/${newFiles.length}:`, {
+            nombre: file.originalname,
+            tamaño: file.size,
+            tipo: file.mimetype
+          });
+
+          // ✅ CREAR NOMBRE ÚNICO PARA CADA ARCHIVO
+          const timestamp = Date.now();
+          const random = Math.random().toString(36).substring(2, 15);
+          const originalName = file.originalname;
+          const extension = originalName.split('.').pop() || 'jpg';
+          
+          // Nombre seguro: quitar caracteres especiales y espacios
+          const safeName = originalName
+            .replace(/\.[^/.]+$/, "") // Quitar extensión
+            .replace(/[^a-zA-Z0-9]/g, '-') // Reemplazar caracteres especiales
+            .toLowerCase();
+          
+          const uniqueFilename = `${safeName}-${timestamp}-${random}.${extension}`;
+          
+          console.log(`   📝 Nombre único generado: ${uniqueFilename}`);
+
+          // ✅ SUBIR A GRIDFS
+          console.log(`   🚀 Subiendo a GridFS...`);
+          const uploadStream = gridFSBucket.openUploadStream(uniqueFilename, {
+            metadata: {
+              uploadedBy: userId,
+              mimeType: file.mimetype,
+              originalName: originalName,
+              size: file.size,
+              relatedCabana: id,
+              uploadDate: new Date()
+            }
+          });
+
+          const fileId = await new Promise((resolve, reject) => {
+            uploadStream.on('error', (error) => {
+              console.error(`   ❌ Error en uploadStream:`, error);
+              reject(error);
+            });
+            
+            uploadStream.on('finish', () => {
+              console.log(`   ✅ GridFS upload completado. File ID: ${uploadStream.id}`);
+              resolve(uploadStream.id);
+            });
+            
+            uploadStream.end(file.buffer);
+          });
+
+          // ✅ CREAR DOCUMENTO EN COLECCIÓN IMAGES
+          console.log(`   📄 Creando documento Image...`);
+          const newImage = new Image({
+            fileId,
+            filename: uniqueFilename,
+            originalName: originalName,
+            mimeType: file.mimetype,
+            size: file.size,
+            uploadedBy: userId,
+            url: `/api/images/${fileId}`,
+            isPublic: true,
+            relatedCabana: id
+          });
+
+          const savedImage = await newImage.save({ session });
+          nuevasImagenesIds.push(savedImage._id);
+          
+          console.log(`   ✅ Imagen guardada en BD: ${savedImage._id}`);
+          
+        } catch (fileError) {
+          console.error(`❌ Error procesando archivo ${file.originalname}:`, {
+            message: fileError.message,
+            code: fileError.code,
+            stack: fileError.stack
+          });
+          
+          // Si es error de duplicado, continuar
+          if (fileError.code === 11000) {
+            console.warn(`   ⚠️ Archivo duplicado: ${file.originalname}. Saltando...`);
+            continue;
+          }
+          
+          // Para otros errores, decidir si continuar o abortar
+          console.warn(`   ⚠️ Continuando con siguiente archivo después de error...`);
         }
-      });
-
-      const fileId = await new Promise((resolve, reject) => {
-        uploadStream.on('error', reject);
-        uploadStream.on('finish', () => resolve(uploadStream.id));
-        uploadStream.end(file.buffer);
-      });
-
-      const newImage = new Image({
-        fileId,
-        filename: file.originalname,
-        originalName: file.originalname,
-        mimeType: file.mimetype,
-        size: file.size,
-        uploadedBy: userId,
-        url: `/api/images/${fileId}`,
-        isPublic: true,
-        relatedCabana: id
-      });
-
-      const savedImage = await newImage.save({ session });
-      nuevasImagenesIds.push(savedImage._id);
-      console.log(`🆕 Nueva imagen subida: ${savedImage._id}`);
+      }
+    } else {
+      console.log('ℹ️ No hay archivos nuevos para subir');
     }
 
-    // 3. Combinar imágenes existentes con nuevas
+    console.log('📊 Resultados de subida:', {
+      nuevasSubidas: nuevasImagenesIds.length,
+      ids: nuevasImagenesIds
+    });
+
+    // 3. COMBINAR IMÁGENES EXISTENTES CON NUEVAS
     const imagenesConservadas = imagesToKeep
-      .filter(imgId => mongoose.Types.ObjectId.isValid(imgId))
+      .filter(imgId => {
+        const isValid = mongoose.Types.ObjectId.isValid(imgId);
+        if (!isValid) {
+          console.warn(`⚠️ ID inválido en imagesToKeep: ${imgId}`);
+        }
+        return isValid;
+      })
       .map(imgId => new mongoose.Types.ObjectId(imgId));
 
     const todasLasImagenes = [...imagenesConservadas, ...nuevasImagenesIds];
 
-    console.log('📊 Arrays combinados:', {
+    console.log('🔄 Combinando imágenes:', {
       conservadas: imagenesConservadas.length,
       nuevas: nuevasImagenesIds.length,
       total: todasLasImagenes.length
     });
 
-    // 4. Actualizar cabaña
+    // 4. ACTUALIZAR CABAÑA
+    console.log('🔄 Actualizando cabaña...');
+    const updateData = {
+      images: todasLasImagenes,
+      updatedAt: new Date()
+    };
+
+    // Solo actualizar imagenPrincipal si hay imágenes
+    if (todasLasImagenes.length > 0) {
+      updateData.imagenPrincipal = todasLasImagenes[0];
+    }
+
     const cabanaActualizada = await Cabana.findByIdAndUpdate(
       id,
-      {
-        images: todasLasImagenes,
-        imagenPrincipal: todasLasImagenes[0] || cabana.imagenPrincipal
-      },
+      updateData,
       {
         new: true,
         session,
         populate: {
           path: 'images',
-          select: 'url filename _id fileId'
+          select: 'url filename _id fileId originalName',
+          options: { limit: 20 }
         }
       }
     );
 
-    await session.commitTransaction();
+    // 5. ACTUALIZAR REFERENCIAS EN IMÁGENES CONSERVADAS
+    if (imagenesConservadas.length > 0) {
+      console.log('🔗 Actualizando referencias en imágenes conservadas...');
+      await Image.updateMany(
+        { _id: { $in: imagenesConservadas } },
+        { $set: { relatedCabana: id } },
+        { session }
+      );
+    }
 
-    // 5. Preparar respuesta
-    res.json({
+    // 6. CONFIRMAR TRANSACCIÓN
+    await session.commitTransaction();
+    session.endSession();
+
+    console.log('✅ Transacción completada exitosamente');
+    console.log('==========================================');
+
+    // 7. PREPARAR RESPUESTA
+    const responseData = {
       success: true,
-      message: `Se agregaron ${nuevasImagenesIds.length} nuevas imágenes`,
+      message: nuevasImagenesIds.length > 0 
+        ? `Se ${nuevasImagenesIds.length === 1 ? 'agregó' : 'agregaron'} ${nuevasImagenesIds.length} ${nuevasImagenesIds.length === 1 ? 'imagen' : 'imágenes'}`
+        : 'No se agregaron nuevas imágenes',
       data: {
         cabanaId: id,
+        cabanaNombre: cabanaActualizada.nombre,
         totalImagenes: cabanaActualizada.images.length,
-        nuevasImagenes: nuevasImagenesIds,
+        nuevasImagenes: nuevasImagenesIds.length,
         imagenes: cabanaActualizada.images.map(img => ({
           _id: img._id,
           url: img.url.startsWith('http') ? img.url : `${API_URL}${img.url}`,
           filename: img.filename,
+          originalName: img.originalName || img.filename,
           isNew: nuevasImagenesIds.some(newId => newId.equals(img._id))
         }))
+      },
+      debug: {
+        archivosRecibidos: newFiles.length,
+        imagenesConservadas: imagenesConservadas.length,
+        imagenesNuevas: nuevasImagenesIds.length,
+        imagenesTotales: cabanaActualizada.images.length
       }
-    });
+    };
+
+    res.json(responseData);
 
   } catch (error) {
+    // 8. MANEJO DE ERRORES DETALLADO
     await session.abortTransaction();
-    console.error('❌ Error en agregarImagenesACabana:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Error al agregar imágenes',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  } finally {
     session.endSession();
+    
+    console.error('❌ ========== ERROR CRÍTICO ==========');
+    console.error('❌ Error en agregarImagenesACabana:');
+    console.error('📌 Mensaje:', error.message);
+    console.error('📌 Código:', error.code);
+    console.error('📌 Stack:', error.stack);
+    
+    if (error.name === 'MongoServerError') {
+      console.error('📌 Error de MongoDB:', {
+        code: error.code,
+        keyPattern: error.keyPattern,
+        keyValue: error.keyValue
+      });
+    }
+    
+    console.error('❌ ====================================');
+
+    // Respuesta de error detallada
+    let errorMessage = 'Error al procesar la solicitud';
+    let statusCode = 500;
+
+    if (error.code === 11000) {
+      errorMessage = `Error de duplicado: Ya existe un archivo con nombre "${error.keyValue?.filename}"`;
+      statusCode = 400;
+    } else if (error.name === 'ValidationError') {
+      errorMessage = 'Error de validación: ' + Object.values(error.errors).map(e => e.message).join(', ');
+      statusCode = 400;
+    } else if (error.message.includes('timeout')) {
+      errorMessage = 'La operación tardó demasiado. Intenta con menos imágenes.';
+      statusCode = 408;
+    }
+
+    res.status(statusCode).json({
+      success: false,
+      error: errorMessage,
+      details: process.env.NODE_ENV === 'development' ? {
+        message: error.message,
+        code: error.code,
+        stack: error.stack
+      } : undefined
+    });
   }
 };
 
