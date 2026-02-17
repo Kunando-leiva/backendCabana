@@ -684,6 +684,7 @@ export const getFechasOcupadas = async (req, res) => {
     res.status(200).json({
       success: true,
       data: fechasUnicas.map(item => item.fecha), // Solo las fechas para frontend
+      fechas: fechasUnicas.map(item => item.fecha), // Agregar fechas explícito
       detalles: fechasUnicas, // Detalles completos para debug
       total: fechasUnicas.length,
       mensaje: `Se encontraron ${fechasUnicas.length} días ocupados ${cabanaId ? 'para esta cabaña' : 'en total'}`
