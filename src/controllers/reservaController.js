@@ -575,6 +575,7 @@ export const obtenerReservaById = async (req, res) => {
 };
 
 // 🔥 FUNCIÓN CORREGIDA Y MEJORADA CON LOGGING
+// 🔥 FUNCIÓN CORREGIDA - VERSIÓN GENERAL DEFINITIVA
 export const getFechasOcupadas = async (req, res) => {
   try {
     const { cabanaId, startDate, endDate } = req.query;
@@ -622,80 +623,74 @@ export const getFechasOcupadas = async (req, res) => {
 
     console.log(`📊 ${reservas.length} reservas encontradas`);
 
-    // 🔥 CORRECCIÓN CRÍTICA: Procesar fechas ocupadas correctamente
-    const todasFechasOcupadas = [];
+    // 🔥 CORRECCIÓN DEFINITIVA: Generar fechas ocupadas (NO incluir check-out)
+    const fechasOcupadas = [];
     
-    reservas.forEach((reserva, index) => {
+    reservas.forEach((reserva) => {
       try {
+        // Obtener fechas como strings YYYY-MM-DD directamente
         const fechaInicio = new Date(reserva.fechaInicio);
         const fechaFin = new Date(reserva.fechaFin);
         
-        fechaInicio.setHours(0, 0, 0, 0);
-        fechaFin.setHours(0, 0, 0, 0);
+        // Normalizar a UTC para evitar problemas de zona horaria
+        const inicioUTC = new Date(Date.UTC(
+          fechaInicio.getUTCFullYear(),
+          fechaInicio.getUTCMonth(),
+          fechaInicio.getUTCDate()
+        ));
         
-        console.log(`📅 Reserva ${index + 1}:`, {
-          cabana: reserva.cabana?.nombre || 'Desconocida',
-          checkIn: fechaInicio.toISOString().split('T')[0],
-          checkOut: fechaFin.toISOString().split('T')[0],
-          noches: Math.floor((fechaFin - fechaInicio) / (1000 * 60 * 60 * 24))
-        });
+        const finUTC = new Date(Date.UTC(
+          fechaFin.getUTCFullYear(),
+          fechaFin.getUTCMonth(),
+          fechaFin.getUTCDate()
+        ));
         
-        const current = new Date(fechaInicio);
+        const inicioStr = inicioUTC.toISOString().split('T')[0];
+        const finStr = finUTC.toISOString().split('T')[0];
         
-        // 🔥 LOGICA CORRECTA: NO incluir el día de check-out
-        while (current < fechaFin) {
-          const fechaStr = current.toISOString().split('T')[0];
+        console.log(`📅 Reserva: ${inicioStr} → ${finStr} (${Math.floor((finUTC - inicioUTC) / (86400000))} noches)`);
+        
+        // 🔥 LÓGICA HOTELERA CORRECTA: 
+        // Las noches ocupadas son desde fechaInicio HASTA fechaFin-1
+        // El día de fechaFin es CHECK-OUT (NO ocupado)
+        const fechaActual = new Date(inicioUTC);
+        
+        while (fechaActual.toISOString().split('T')[0] < finStr) {
+          const fechaStr = fechaActual.toISOString().split('T')[0];
+          fechasOcupadas.push(fechaStr);
+          console.log(`   🛌 Noche ocupada: ${fechaStr}`);
           
-          todasFechasOcupadas.push({
-            fecha: fechaStr,
-            cabana: reserva.cabana?.nombre || 'Desconocida',
-            reservaId: reserva._id,
-            checkIn: fechaInicio.toISOString().split('T')[0],
-            checkOut: fechaFin.toISOString().split('T')[0]
-          });
-          
-          console.log(`   🛌 Noche ocupada: ${fechaStr} (noche del ${fechaStr})`);
-          current.setDate(current.getDate() + 1);
+          // Avanzar 1 día en UTC
+          fechaActual.setUTCDate(fechaActual.getUTCDate() + 1);
         }
         
-        // 🔥 MOSTRAR EXPLICITAMENTE QUE EL DÍA DE CHECK-OUT NO ESTÁ OCUPADO
-        const checkOutDate = fechaFin.toISOString().split('T')[0];
-        console.log(`   ✅ Día LIBRE (check-out): ${checkOutDate} - Disponible para nueva reserva`);
+        console.log(`   ✅ Día check-out (libre): ${finStr}`);
         
       } catch (error) {
-        console.warn(`⚠️ Error procesando reserva ${reserva._id}:`, error.message);
+        console.warn(`⚠️ Error procesando reserva:`, error.message);
       }
     });
 
-    // Filtrar duplicados
-    const fechasUnicas = [];
-    const fechasSet = new Set();
-    
-    todasFechasOcupadas.forEach(item => {
-      if (!fechasSet.has(item.fecha)) {
-        fechasSet.add(item.fecha);
-        fechasUnicas.push(item);
-      }
-    });
+    // Eliminar duplicados y ordenar
+    const fechasUnicas = [...new Set(fechasOcupadas)].sort();
 
-    console.log(`📈 Total días ocupados únicos: ${fechasUnicas.length}`);
-    console.log('📋 Fechas ocupadas:', fechasUnicas.map(f => f.fecha));
+    console.log(`📊 TOTAL: ${fechasUnicas.length} días ocupados`);
+    console.log('📋 Fechas ocupadas:', fechasUnicas);
 
+    // Enviar respuesta limpia al frontend
     res.status(200).json({
       success: true,
-      data: fechasUnicas.map(item => item.fecha), // Solo las fechas para frontend
-      fechas: fechasUnicas.map(item => item.fecha), // Agregar fechas explícito
-      detalles: fechasUnicas, // Detalles completos para debug
+      fechas: fechasUnicas,        // Formato principal recomendado
+      data: fechasUnicas,           // Para compatibilidad con código existente
       total: fechasUnicas.length,
-      mensaje: `Se encontraron ${fechasUnicas.length} días ocupados ${cabanaId ? 'para esta cabaña' : 'en total'}`
+      mensaje: `Se encontraron ${fechasUnicas.length} días ocupados`
     });
 
   } catch (error) {
     console.error('❌ Error en getFechasOcupadas:', error);
     res.status(500).json({ 
       success: false,
-      error: 'Error al obtener fechas ocupadas',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: 'Error al obtener fechas ocupadas'
     });
   }
 };
