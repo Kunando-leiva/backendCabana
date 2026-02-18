@@ -593,46 +593,24 @@ export const getFechasOcupadas = async (req, res) => {
     
     if (cabanaId) {
       query.cabana = cabanaId;
-      console.log(`🏠 Filtrando por cabaña: ${cabanaId}`);
     }
     
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      
-      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-        return res.status(400).json({ 
-          success: false,
-          error: 'Formato de fecha inválido. Use YYYY-MM-DD'
-        });
-      }
-
-      query.$or = [
-        { 
-          fechaInicio: { $lte: end },
-          fechaFin: { $gte: start }
-        }
-      ];
-      console.log(`📆 Rango solicitado: ${startDate} a ${endDate}`);
-    }
-
     const reservas = await Reserva.find(query)
       .select('fechaInicio fechaFin cabana')
-      .populate('cabana', 'nombre')
       .lean();
 
     console.log(`📊 ${reservas.length} reservas encontradas`);
 
-    // 🔥 CORRECCIÓN DEFINITIVA: Generar fechas ocupadas (NO incluir check-out)
-    const fechasOcupadas = [];
+    // 🔥 NUEVA LÓGICA: Separar días de check-in y noches ocupadas
+    const nochesOcupadas = new Set(); // Días donde se DUERME (check-in hasta check-out-1)
+    const diasCheckIn = new Set();    // Días donde hay ENTRADA (check-in)
     
     reservas.forEach((reserva) => {
       try {
-        // Obtener fechas como strings YYYY-MM-DD directamente
         const fechaInicio = new Date(reserva.fechaInicio);
         const fechaFin = new Date(reserva.fechaFin);
         
-        // Normalizar a UTC para evitar problemas de zona horaria
+        // Normalizar a UTC
         const inicioUTC = new Date(Date.UTC(
           fechaInicio.getUTCFullYear(),
           fechaInicio.getUTCMonth(),
@@ -648,46 +626,57 @@ export const getFechasOcupadas = async (req, res) => {
         const inicioStr = inicioUTC.toISOString().split('T')[0];
         const finStr = finUTC.toISOString().split('T')[0];
         
-        console.log(`📅 Reserva: ${inicioStr} → ${finStr} (${Math.floor((finUTC - inicioUTC) / (86400000))} noches)`);
+        console.log(`📅 Reserva: ${inicioStr} → ${finStr}`);
         
-        // 🔥 LÓGICA HOTELERA CORRECTA: 
-        // Las noches ocupadas son desde fechaInicio HASTA fechaFin-1
-        // El día de fechaFin es CHECK-OUT (NO ocupado)
+        // 🔥 REGLA DE NEGOCIO:
+        // 1. Las NOCHES OCUPADAS son desde fechaInicio HASTA fechaFin-1
+        // 2. Los días de CHECK-IN (fechaInicio) están disponibles para CHECK-OUT hasta las 10AM
+        
+        // Marcar noches ocupadas (días donde se duerme)
         const fechaActual = new Date(inicioUTC);
-        
         while (fechaActual.toISOString().split('T')[0] < finStr) {
           const fechaStr = fechaActual.toISOString().split('T')[0];
-          fechasOcupadas.push(fechaStr);
+          nochesOcupadas.add(fechaStr);
           console.log(`   🛌 Noche ocupada: ${fechaStr}`);
-          
-          // Avanzar 1 día en UTC
           fechaActual.setUTCDate(fechaActual.getUTCDate() + 1);
         }
         
-        console.log(`   ✅ Día check-out (libre): ${finStr}`);
+        // Marcar día de check-in (entrada 12PM)
+        diasCheckIn.add(inicioStr);
+        console.log(`   🔓 Día check-in (disponible para check-out hasta 10AM): ${inicioStr}`);
         
       } catch (error) {
-        console.warn(`⚠️ Error procesando reserva:`, error.message);
+        console.warn(`⚠️ Error:`, error.message);
       }
     });
 
-    // Eliminar duplicados y ordenar
-    const fechasUnicas = [...new Set(fechasOcupadas)].sort();
+    // 🔥 Decidir qué días mostrar como "ocupados" en el calendario:
+    // Mostramos SOLO las noches ocupadas, NO los días de check-in
+    const fechasAMostrar = [...nochesOcupadas].sort();
 
-    console.log(`📊 TOTAL: ${fechasUnicas.length} días ocupados`);
-    console.log('📋 Fechas ocupadas:', fechasUnicas);
+    console.log(`📊 RESULTADO:`);
+    console.log(`   - Noches ocupadas: ${nochesOcupadas.size}`);
+    console.log(`   - Días check-in (disponibles para check-out): ${diasCheckIn.size}`);
+    console.log(`   - Total fechas a mostrar: ${fechasAMostrar.length}`);
+    
+    // Verificación específica para el 20 de febrero
+    if (diasCheckIn.has('2026-02-20')) {
+      console.log('✅ 2026-02-20 es check-in (disponible para check-out)');
+    }
+    if (nochesOcupadas.has('2026-02-20')) {
+      console.log('✅ 2026-02-20 es noche ocupada');
+    }
 
-    // Enviar respuesta limpia al frontend
     res.status(200).json({
       success: true,
-      fechas: fechasUnicas,        // Formato principal recomendado
-      data: fechasUnicas,           // Para compatibilidad con código existente
-      total: fechasUnicas.length,
-      mensaje: `Se encontraron ${fechasUnicas.length} días ocupados`
+      fechas: fechasAMostrar,        // Solo noches ocupadas
+      data: fechasAMostrar,
+      total: fechasAMostrar.length,
+      mensaje: `Se encontraron ${fechasAMostrar.length} noches ocupadas`
     });
 
   } catch (error) {
-    console.error('❌ Error en getFechasOcupadas:', error);
+    console.error('❌ Error:', error);
     res.status(500).json({ 
       success: false,
       error: 'Error al obtener fechas ocupadas'
