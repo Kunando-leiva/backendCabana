@@ -702,7 +702,7 @@ export const getCabanasDisponibles = async (req, res) => {
       });
     }
 
-    // Crear fechas
+    // Crear fechas - usar UTC para consistencia
     const fechaInicioDate = new Date(fechaInicio + 'T12:00:00Z');
     const fechaFinDate = new Date(fechaFin + 'T10:00:00Z');
     
@@ -722,32 +722,63 @@ export const getCabanasDisponibles = async (req, res) => {
 
     console.log('🔍 Buscando reservas conflictivas...');
     
-    // Buscar reservas conflictivas
+    // 🔥 NUEVA LÓGICA: Usar la misma que getFechasOcupadas
+    // Una cabaña está ocupada si hay una reserva que cubra ALGUNA de las noches
+    // Las noches son desde fechaInicioDate hasta fechaFinDate-1
+    
     const reservasEnRango = await Reserva.find({
       estado: { $ne: 'cancelada' },
-      $and: [
+      $or: [
+        // Caso 1: Reserva que comienza antes de nuestro check-out y termina después de nuestro check-in
+        // Pero NO considerar si termina exactamente el día de nuestro check-out (check-out válido)
         {
-          fechaFin: { $gt: fechaInicioDate }  // Termina DESPUÉS de nuestro check-in
-        },
-        {
-          fechaInicio: { $lt: fechaFinDate }  // Comienza ANTES de nuestro check-out
+          fechaInicio: { $lt: fechaFinDate },  // Comienza antes de que nos vayamos
+          fechaFin: { $gt: fechaInicioDate }    // Termina después de que llegamos
         }
       ]
     })
-    .select('cabana')
+    .select('cabana fechaInicio fechaFin')
     .lean();
 
-    console.log(`📊 Reservas conflictivas encontradas: ${reservasEnRango.length}`);
+    console.log(`📊 Reservas encontradas: ${reservasEnRango.length}`);
+
+    // 🔥 FILTRADO ADICIONAL: Excluir reservas que terminan exactamente el día de check-out
+    const reservasConflictivas = reservasEnRango.filter(reserva => {
+      const reservaFinDate = new Date(reserva.fechaFin);
+      const reservaInicioDate = new Date(reserva.fechaInicio);
+      
+      // Normalizar a YYYY-MM-DD para comparación
+      const reservaFinStr = reservaFinDate.toISOString().split('T')[0];
+      const fechaFinStr = fechaFinDate.toISOString().split('T')[0];
+      const reservaInicioStr = reservaInicioDate.toISOString().split('T')[0];
+      
+      // Si la reserva termina el mismo día de nuestro check-out, NO es conflicto
+      if (reservaFinStr === fechaFinStr) {
+        console.log(`✅ Reserva termina el día de check-out (${reservaFinStr}), NO bloquea`);
+        return false;
+      }
+      
+      // Si la reserva comienza el mismo día de nuestro check-out después de las 10AM, NO es conflicto
+      if (reservaInicioStr === fechaFinStr) {
+        console.log(`✅ Reserva comienza el día de check-out (${reservaInicioStr}), disponible para check-out hasta 10AM`);
+        return false;
+      }
+      
+      console.log(`❌ Reserva conflictiva: ${reservaInicioStr} → ${reservaFinStr}`);
+      return true;
+    });
+
+    console.log(`📊 Reservas conflictivas después de filtrar: ${reservasConflictivas.length}`);
 
     // IDs de cabañas ocupadas
     const cabanasOcupadasIds = new Set();
-    reservasEnRango.forEach((reserva) => {
+    reservasConflictivas.forEach((reserva) => {
       cabanasOcupadasIds.add(reserva.cabana.toString());
     });
 
     console.log(`📋 Cabañas ocupadas: ${Array.from(cabanasOcupadasIds).length}`);
 
-    // 🔥 **SOLUCIÓN: Usar populate como listarCabanasDisponibles**
+    // Obtener cabañas disponibles
     console.log('🔍 Obteniendo cabañas disponibles con populate...');
     
     const cabanasDisponibles = await Cabana.find({
@@ -766,11 +797,10 @@ export const getCabanasDisponibles = async (req, res) => {
 
     console.log(`📄 Cabañas disponibles encontradas: ${cabanasDisponibles.length}`);
 
-    // 🔥 **MANTENER MISMA ESTRUCTURA que listarCabanasDisponibles**
+    // Procesar respuesta
     const API_URL = process.env.API_URL || 'http://localhost:5000';
     
     const response = cabanasDisponibles.map(cabana => {
-      // Misma lógica que listarCabanasDisponibles
       const imagen = cabana.images?.[0]?.url || 
                    cabana.imagenPrincipal || 
                    `${API_URL}/default-cabana.jpg`;
@@ -797,7 +827,6 @@ export const getCabanasDisponibles = async (req, res) => {
 
     console.log(`🎉 ${response.length} cabañas procesadas correctamente`);
 
-    // Respuesta simplificada
     res.status(200).json({
       success: true,
       count: response.length,
