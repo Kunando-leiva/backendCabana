@@ -9,8 +9,10 @@ import {
   obtenerReservasAdmin, 
   getFechasOcupadas,
   calcularPrecioReserva,
-  getCabanasDisponibles
+  getCabanasDisponibles,
+  
 } from '../controllers/reservaController.js';
+import { getCabanasDisponiblesV2 } from '../controllers/getCabanasDisponiblesV2.js';
 import { auth, isAdmin } from '../middlewares/auth.js';
 import Reserva from '../models/Reserva.js';
 
@@ -49,5 +51,8 @@ router.get('/disponibles', getCabanasDisponibles);
 
 // Endpoint para fechas ocupadas
 router.get('/ocupadas', getFechasOcupadas);
+
+// En tu archivo de rutas (ej: routes/reservas.js)
+router.get('/disponibles-v2', getCabanasDisponiblesV2);
 
 export default router;
