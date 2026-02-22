@@ -1,6 +1,7 @@
-// ============================================
-// NUEVO ENDPOINT MEJORADO: OBTENER CABAÑAS DISPONIBLES V2
-// ============================================
+// controllers/getCabanasDisponiblesV2.js
+import Reserva from '../models/Reserva.js';
+import Cabana from '../models/Cabana.js';
+
 export const getCabanasDisponiblesV2 = async (req, res) => {
   try {
     const { fechaInicio, fechaFin } = req.query;
