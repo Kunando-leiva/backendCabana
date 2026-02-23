@@ -94,17 +94,11 @@ export const crearReservaAdmin = async (req, res) => {
       });
     }
 
-    // Crear fechas con horas específicas
-    const fechaInicioDate = new Date(fechaInicio);
-    const fechaFinDate = new Date(fechaFin);
+    // Crear fechas SIN HORAS para comparación
+    const fechaInicioDate = new Date(fechaInicio + 'T00:00:00.000Z');
+    const fechaFinDate = new Date(fechaFin + 'T00:00:00.000Z');
     
-    // 🔥 IMPORTANTE: Ajustar horas para la lógica de negocio
-    // Check-in: 12:00 PM (mediodía)
-    // Check-out: 10:00 AM
-    fechaInicioDate.setUTCHours(12, 0, 0, 0);
-    fechaFinDate.setUTCHours(10, 0, 0, 0);
-    
-    console.log('📅 Fechas parseadas con horas:', {
+    console.log('📅 Fechas parseadas (sin horas):', {
       inicio: fechaInicioDate.toISOString(),
       fin: fechaFinDate.toISOString()
     });
@@ -116,15 +110,15 @@ export const crearReservaAdmin = async (req, res) => {
       });
     }
 
-    // 🔥 CONDICIÓN CORREGIDA PARA VERIFICAR DISPONIBILIDAD
-    // Buscar reservas que se superpongan considerando las horas de check-in/out
+    // 🔥 CONDICIÓN CORREGIDA: Buscar reservas que se superpongan
+    // Una reserva existente ocupa las noches desde su fechaInicio hasta fechaFin-1
+    // Tu reserva ocupa las noches desde fechaInicioDate hasta fechaFinDate-1
+    
     const existeReserva = await Reserva.findOne({
       cabana: cabanaId,
       $and: [
-        // La reserva existente empieza ANTES de que nosotros nos vayamos
-        { fechaInicio: { $lt: fechaFinDate } },
-        // La reserva existente termina DESPUÉS de que nosotros lleguemos
-        { fechaFin: { $gt: fechaInicioDate } }
+        { fechaInicio: { $lt: fechaFinDate } },  // La reserva empieza ANTES de tu check-out
+        { fechaFin: { $gt: fechaInicioDate } }     // La reserva termina DESPUÉS de tu check-in
       ],
       estado: { $ne: 'cancelada' }
     });
@@ -132,8 +126,8 @@ export const crearReservaAdmin = async (req, res) => {
     if (existeReserva) {
       console.log('❌ Conflicto con reserva existente:', existeReserva._id);
       
-      // Log detallado para depuración
-      console.log('   - Nuestra reserva:', {
+      // Log detallado
+      console.log('   - Tu reserva:', {
         inicio: fechaInicioDate.toISOString(),
         fin: fechaFinDate.toISOString()
       });
@@ -155,6 +149,10 @@ export const crearReservaAdmin = async (req, res) => {
       });
     }
 
+    // Crear fechas con horas para guardar en la BD
+    const fechaInicioBD = new Date(fechaInicio + 'T15:00:00.000Z'); // 12:00 PM ART
+    const fechaFinBD = new Date(fechaFin + 'T13:00:00.000Z');      // 10:00 AM ART
+
     // Calcular precio total
     const precioTotal = calcularPrecioTotal(fechaInicioDate, fechaFinDate);
     console.log('💰 Precio total calculado:', precioTotal);
@@ -172,8 +170,8 @@ export const crearReservaAdmin = async (req, res) => {
       usuario: req.user.id,
       cabana: cabanaId,
       dni: huesped.dni.trim(),
-      fechaInicio: fechaInicioDate,
-      fechaFin: fechaFinDate,
+      fechaInicio: fechaInicioBD,
+      fechaFin: fechaFinBD,
       precioTotal,
       estado: 'confirmada',
       creadaPorAdmin: true,
@@ -194,14 +192,13 @@ export const crearReservaAdmin = async (req, res) => {
     await Cabana.findByIdAndUpdate(cabanaId, {
       $push: {
         fechasReservadas: {
-          fechaInicio: fechaInicioDate,
-          fechaFin: fechaFinDate,
+          fechaInicio: fechaInicioBD,
+          fechaFin: fechaFinBD,
           reservaId: reserva._id
         }
       }
     });
 
-    // Obtener desglose de precios para la respuesta
     const desglose = obtenerDesglosePrecios(fechaInicioDate, fechaFinDate);
 
     res.status(201).json({
