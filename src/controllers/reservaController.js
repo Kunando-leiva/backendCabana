@@ -101,8 +101,8 @@ export const crearReservaAdmin = async (req, res) => {
     // 🔥 IMPORTANTE: Ajustar horas para la lógica de negocio
     // Check-in: 12:00 PM (mediodía)
     // Check-out: 10:00 AM
-    fechaInicioDate.setHours(12, 0, 0, 0);
-    fechaFinDate.setHours(10, 0, 0, 0);
+    fechaInicioDate.setUTCHours(12, 0, 0, 0);
+    fechaFinDate.setUTCHours(10, 0, 0, 0);
     
     console.log('📅 Fechas parseadas con horas:', {
       inicio: fechaInicioDate.toISOString(),
