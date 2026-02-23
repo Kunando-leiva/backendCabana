@@ -73,14 +73,56 @@ router.post('/',
   crearCabana
 );
 
-// ✅ RUTA PRINCIPAL DE ACTUALIZACIÓN (usa actualizarCabana corregido)
+// ✅ RUTA ÚNICA Y COMPLETA PARA ACTUALIZAR CABAÑA
 router.put('/:id', 
   auth,
   isAdmin,
-  upload.array('newImages', 10),
-  debugMiddleware, // Opcional: quitar en producción
+  upload.fields([
+    { name: 'newImages', maxCount: 10 },        // Nuevas imágenes a subir
+    { name: 'images', maxCount: 10 }            // También aceptar 'images' por compatibilidad
+  ]),
+  (req, res, next) => {
+    // 🔥 FIX: Unificar los archivos de ambos nombres de campo
+    const newImages = req.files?.['newImages'] || [];
+    const images = req.files?.['images'] || [];
+    
+    // Combinar todos los archivos en req.files como array simple
+    req.files = [...newImages, ...images];
+    
+    console.log('📸 Archivos recibidos (unificados):', {
+      newImages: newImages.length,
+      images: images.length,
+      total: req.files.length
+    });
+    
+    next();
+  },
+  (req, res, next) => {
+    // 🔥 FIX: Procesar imagesToKeep si viene como string
+    if (req.body.imagesToKeep && typeof req.body.imagesToKeep === 'string') {
+      try {
+        req.body.imagesToKeep = JSON.parse(req.body.imagesToKeep);
+        console.log('✅ imagesToKeep parseado:', req.body.imagesToKeep);
+      } catch (e) {
+        console.warn('⚠️ Error parseando imagesToKeep:', e.message);
+      }
+    }
+    
+    // 🔥 FIX: Procesar imagesToDelete si viene como string
+    if (req.body.imagesToDelete && typeof req.body.imagesToDelete === 'string') {
+      try {
+        req.body.imagesToDelete = JSON.parse(req.body.imagesToDelete);
+        console.log('✅ imagesToDelete parseado:', req.body.imagesToDelete);
+      } catch (e) {
+        console.warn('⚠️ Error parseando imagesToDelete:', e.message);
+      }
+    }
+    
+    next();
+  },
   actualizarCabana
 );
+
 
 // Ruta para eliminar una imagen específica de una cabaña
 router.delete('/:cabanaId/images/:imageId',
@@ -110,33 +152,33 @@ router.delete('/:cabanaId/images/:imageId',
   }
 );
 
-// ✅ RUTA MEJORADA PARA AGREGAR IMÁGENES
-router.post('/:id/agregar-imagenes',
-  auth,
-  isAdmin,
-  debugMiddleware, // Opcional: para diagnóstico
-  upload.array('images', 10),
-  async (req, res) => {
-    try {
-      console.log('📤 Ruta /agregar-imagenes llamada');
-      console.log('📊 Datos recibidos:', {
-        cabanaId: req.params.id,
-        filesCount: req.files?.length || 0,
-        body: req.body
-      });
+// // ✅ RUTA MEJORADA PARA AGREGAR IMÁGENES
+// router.post('/:id/agregar-imagenes',
+//   auth,
+//   isAdmin,
+//   debugMiddleware, // Opcional: para diagnóstico
+//   upload.array('images', 10),
+//   async (req, res) => {
+//     try {
+//       console.log('📤 Ruta /agregar-imagenes llamada');
+//       console.log('📊 Datos recibidos:', {
+//         cabanaId: req.params.id,
+//         filesCount: req.files?.length || 0,
+//         body: req.body
+//       });
       
-      // Llamar función del controlador
-      return agregarImagenesACabana(req, res);
-    } catch (error) {
-      console.error('❌ Error en ruta agregar-imagenes:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Error interno del servidor',
-        details: process.env.NODE_ENV === 'development' ? error.message : undefined
-      });
-    }
-  }
-);
+//       // Llamar función del controlador
+//       return agregarImagenesACabana(req, res);
+//     } catch (error) {
+//       console.error('❌ Error en ruta agregar-imagenes:', error);
+//       res.status(500).json({
+//         success: false,
+//         error: 'Error interno del servidor',
+//         details: process.env.NODE_ENV === 'development' ? error.message : undefined
+//       });
+//     }
+//   }
+// );
 
 // Ruta para reordenar imágenes
 router.patch('/:id/reordenar-imagenes',

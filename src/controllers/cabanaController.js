@@ -130,63 +130,32 @@ export const actualizarCabana = async (req, res) => {
         const newFiles = req.files || [];
         const userId = req.user._id;
 
-        console.log('📝 Datos recibidos en actualizarCabana:', {
-            cabanaId: id,
-            newFiles: newFiles.length,
-            bodyKeys: Object.keys(req.body)
-        });
+        console.log('📝 ====== ACTUALIZANDO CABAÑA ======');
+        console.log('📌 ID:', id);
+        console.log('📁 Archivos nuevos:', newFiles.length);
+        console.log('📦 Body completo:', req.body);
 
-        // ✅✅✅ SOLUCIÓN CRÍTICA: Manejo seguro de imagesToDelete
-        let imagesToDeleteArray = [];
-        if (req.body.imagesToDelete) {
-            console.log('🗑️ imagesToDelete raw:', req.body.imagesToDelete, '| Tipo:', typeof req.body.imagesToDelete);
-            
-            try {
-                // Si es string JSON, parsear
-                if (typeof req.body.imagesToDelete === 'string') {
-                    imagesToDeleteArray = JSON.parse(req.body.imagesToDelete);
-                } 
-                // Si ya es array, usar directamente
-                else if (Array.isArray(req.body.imagesToDelete)) {
-                    imagesToDeleteArray = req.body.imagesToDelete;
-                }
-                // Si viene como string simple (id único)
-                else if (typeof req.body.imagesToDelete === 'string' && mongoose.Types.ObjectId.isValid(req.body.imagesToDelete)) {
-                    imagesToDeleteArray = [req.body.imagesToDelete];
-                }
-            } catch (e) {
-                console.warn('⚠️ Error parsing imagesToDelete:', e);
-                imagesToDeleteArray = [];
-            }
-        }
-
-        // ✅✅✅ SOLUCIÓN CRÍTICA: Manejo seguro de imagesToKeep
+        // 🔥 FIX: Manejo robusto de imagesToKeep
         let imagesToKeepArray = [];
         if (req.body.imagesToKeep) {
-            console.log('💾 imagesToKeep raw:', req.body.imagesToKeep, '| Tipo:', typeof req.body.imagesToKeep);
+            console.log('💾 imagesToKeep (raw):', req.body.imagesToKeep);
+            console.log('💾 Tipo:', typeof req.body.imagesToKeep);
             
             try {
                 if (typeof req.body.imagesToKeep === 'string') {
                     imagesToKeepArray = JSON.parse(req.body.imagesToKeep);
                 } else if (Array.isArray(req.body.imagesToKeep)) {
                     imagesToKeepArray = req.body.imagesToKeep;
+                } else if (typeof req.body.imagesToKeep === 'object' && req.body.imagesToKeep !== null) {
+                    imagesToKeepArray = Object.values(req.body.imagesToKeep);
                 }
             } catch (e) {
-                console.warn('⚠️ Error parsing imagesToKeep:', e);
+                console.warn('⚠️ Error parseando imagesToKeep:', e.message);
                 imagesToKeepArray = [];
             }
         }
 
-        // Asegurar que sean arrays
-        if (!Array.isArray(imagesToDeleteArray)) imagesToDeleteArray = [];
-        if (!Array.isArray(imagesToKeepArray)) imagesToKeepArray = [];
-
-        console.log('✅ Arrays procesados:', {
-            imagesToKeepArray,
-            imagesToDeleteArray
-        });
-
-        // 1. Validar cabaña existe
+        // 🔥 FIX: Si imagesToKeep está vacío, mantener imágenes actuales
         const cabanaActual = await Cabana.findById(id).session(session);
         if (!cabanaActual) {
             await session.abortTransaction();
@@ -195,6 +164,39 @@ export const actualizarCabana = async (req, res) => {
                 error: 'Cabaña no encontrada' 
             });
         }
+
+        // Si no hay imagesToKeep, mantener todas las imágenes actuales
+        if (imagesToKeepArray.length === 0) {
+            console.log('ℹ️ No se recibieron imagesToKeep. Manteniendo todas las imágenes actuales.');
+            imagesToKeepArray = cabanaActual.images.map(img => img.toString());
+        }
+
+        // 🔥 FIX: Manejo robusto de imagesToDelete
+        let imagesToDeleteArray = [];
+        if (req.body.imagesToDelete) {
+            console.log('🗑️ imagesToDelete (raw):', req.body.imagesToDelete);
+            
+            try {
+                if (typeof req.body.imagesToDelete === 'string') {
+                    imagesToDeleteArray = JSON.parse(req.body.imagesToDelete);
+                } else if (Array.isArray(req.body.imagesToDelete)) {
+                    imagesToDeleteArray = req.body.imagesToDelete;
+                }
+            } catch (e) {
+                console.warn('⚠️ Error parseando imagesToDelete:', e.message);
+                imagesToDeleteArray = [];
+            }
+        }
+
+        // Asegurar que sean arrays
+        if (!Array.isArray(imagesToKeepArray)) imagesToKeepArray = [];
+        if (!Array.isArray(imagesToDeleteArray)) imagesToDeleteArray = [];
+
+        console.log('✅ Arrays finales:', {
+            imagesToKeep: imagesToKeepArray.length,
+            imagesToDelete: imagesToDeleteArray.length,
+            newFiles: newFiles.length
+        });
 
         // 2. ELIMINAR IMÁGENES SOLICITADAS
         const imagenesEliminadas = [];

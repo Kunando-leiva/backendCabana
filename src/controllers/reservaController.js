@@ -64,14 +64,14 @@ export const calcularPrecioReserva = async (req, res) => {
 };
 
 // ============================================
-// 2. MODIFICAR: crearReservaAdmin
+// 2. MODIFICAR: crearReservaAdmin - VERSIÓN CORREGIDA
 // ============================================
 export const crearReservaAdmin = async (req, res) => {
   try {
     const { cabanaId, fechaInicio, fechaFin, huesped } = req.body;
 
     console.log('📝 crearReservaAdmin - Iniciando reserva para cabaña:', cabanaId);
-    console.log('📅 Fechas:', { fechaInicio, fechaFin });
+    console.log('📅 Fechas recibidas:', { fechaInicio, fechaFin });
 
     if (!cabanaId || !fechaInicio || !fechaFin || !huesped) {
       return res.status(400).json({ 
@@ -94,34 +94,54 @@ export const crearReservaAdmin = async (req, res) => {
       });
     }
 
+    // Crear fechas con horas específicas
     const fechaInicioDate = new Date(fechaInicio);
     const fechaFinDate = new Date(fechaFin);
     
-    console.log('📅 Fechas parseadas:', {
+    // 🔥 IMPORTANTE: Ajustar horas para la lógica de negocio
+    // Check-in: 12:00 PM (mediodía)
+    // Check-out: 10:00 AM
+    fechaInicioDate.setHours(12, 0, 0, 0);
+    fechaFinDate.setHours(10, 0, 0, 0);
+    
+    console.log('📅 Fechas parseadas con horas:', {
       inicio: fechaInicioDate.toISOString(),
       fin: fechaFinDate.toISOString()
     });
     
-    if (fechaInicioDate > fechaFinDate) {
+    if (fechaInicioDate >= fechaFinDate) {
       return res.status(400).json({ 
         success: false,
-        error: 'La fecha fin no puede ser anterior a la fecha inicio' 
+        error: 'La fecha fin debe ser posterior a la fecha inicio' 
       });
     }
 
+    // 🔥 CONDICIÓN CORREGIDA PARA VERIFICAR DISPONIBILIDAD
+    // Buscar reservas que se superpongan considerando las horas de check-in/out
     const existeReserva = await Reserva.findOne({
       cabana: cabanaId,
-      $or: [
-        { 
-          fechaInicio: { $lt: fechaFinDate }, 
-          fechaFin: { $gt: fechaInicioDate } 
-        }
+      $and: [
+        // La reserva existente empieza ANTES de que nosotros nos vayamos
+        { fechaInicio: { $lt: fechaFinDate } },
+        // La reserva existente termina DESPUÉS de que nosotros lleguemos
+        { fechaFin: { $gt: fechaInicioDate } }
       ],
       estado: { $ne: 'cancelada' }
     });
 
     if (existeReserva) {
       console.log('❌ Conflicto con reserva existente:', existeReserva._id);
+      
+      // Log detallado para depuración
+      console.log('   - Nuestra reserva:', {
+        inicio: fechaInicioDate.toISOString(),
+        fin: fechaFinDate.toISOString()
+      });
+      console.log('   - Reserva existente:', {
+        inicio: existeReserva.fechaInicio,
+        fin: existeReserva.fechaFin
+      });
+      
       return res.status(400).json({ 
         success: false,
         error: 'La cabaña ya está reservada en esas fechas',
@@ -135,6 +155,7 @@ export const crearReservaAdmin = async (req, res) => {
       });
     }
 
+    // Calcular precio total
     const precioTotal = calcularPrecioTotal(fechaInicioDate, fechaFinDate);
     console.log('💰 Precio total calculado:', precioTotal);
     
@@ -146,6 +167,7 @@ export const crearReservaAdmin = async (req, res) => {
       });
     }
 
+    // Crear la reserva
     const reserva = new Reserva({
       usuario: req.user.id,
       cabana: cabanaId,
@@ -168,6 +190,7 @@ export const crearReservaAdmin = async (req, res) => {
     await reserva.save();
     console.log('✅ Reserva creada ID:', reserva._id);
 
+    // Actualizar la cabaña con las fechas reservadas
     await Cabana.findByIdAndUpdate(cabanaId, {
       $push: {
         fechasReservadas: {
@@ -178,6 +201,7 @@ export const crearReservaAdmin = async (req, res) => {
       }
     });
 
+    // Obtener desglose de precios para la respuesta
     const desglose = obtenerDesglosePrecios(fechaInicioDate, fechaFinDate);
 
     res.status(201).json({
