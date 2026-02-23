@@ -63,8 +63,9 @@ export const calcularPrecioReserva = async (req, res) => {
   }
 };
 
+
 // ============================================
-// 2. MODIFICAR: crearReservaAdmin - VERSIÓN CORREGIDA
+// 2. crearReservaAdmin - VERSIÓN CORREGIDA
 // ============================================
 export const crearReservaAdmin = async (req, res) => {
   try {
@@ -94,7 +95,7 @@ export const crearReservaAdmin = async (req, res) => {
       });
     }
 
-    // Crear fechas SIN HORAS para comparación
+    // Crear fechas base (sin horas para lógica de noches)
     const fechaInicioDate = new Date(fechaInicio + 'T00:00:00.000Z');
     const fechaFinDate = new Date(fechaFin + 'T00:00:00.000Z');
     
@@ -110,48 +111,101 @@ export const crearReservaAdmin = async (req, res) => {
       });
     }
 
-    // 🔥 CONDICIÓN CORREGIDA: Buscar reservas que se superpongan
-    // Una reserva existente ocupa las noches desde su fechaInicio hasta fechaFin-1
-    // Tu reserva ocupa las noches desde fechaInicioDate hasta fechaFinDate-1
+    // 🔥 LÓGICA CORREGIDA PARA PERMITIR CHECK-IN EL MISMO DÍA QUE CHECK-OUT
+    // Una reserva está ocupada si:
+    // 1. La reserva existente empieza ANTES de nuestro check-out (fechaFin) Y
+    // 2. La reserva existente termina DESPUÉS de nuestro check-in (fechaInicio)
+    // PERO: Si la reserva existente termina EXACTAMENTE el día de nuestro check-in, NO hay conflicto
     
-    const existeReserva = await Reserva.findOne({
+    const reservasExistentes = await Reserva.find({
       cabana: cabanaId,
-      $and: [
-        { fechaInicio: { $lt: fechaFinDate } },  // La reserva empieza ANTES de tu check-out
-        { fechaFin: { $gt: fechaInicioDate } }     // La reserva termina DESPUÉS de tu check-in
-      ],
       estado: { $ne: 'cancelada' }
     });
 
-    if (existeReserva) {
-      console.log('❌ Conflicto con reserva existente:', existeReserva._id);
+    console.log(`📊 Total reservas existentes: ${reservasExistentes.length}`);
+
+    let tieneConflicto = false;
+    let reservaConflicto = null;
+
+    for (const reserva of reservasExistentes) {
+      const reservaInicio = new Date(reserva.fechaInicio);
+      const reservaFin = new Date(reserva.fechaFin);
       
-      // Log detallado
-      console.log('   - Tu reserva:', {
-        inicio: fechaInicioDate.toISOString(),
-        fin: fechaFinDate.toISOString()
-      });
-      console.log('   - Reserva existente:', {
-        inicio: existeReserva.fechaInicio,
-        fin: existeReserva.fechaFin
-      });
+      // Normalizar a YYYY-MM-DD para comparación
+      const reservaInicioStr = reservaInicio.toISOString().split('T')[0];
+      const reservaFinStr = reservaFin.toISOString().split('T')[0];
+      const nuevaInicioStr = fechaInicioDate.toISOString().split('T')[0];
+      const nuevaFinStr = fechaFinDate.toISOString().split('T')[0];
+
+      console.log(`🔍 Analizando reserva: ${reservaInicioStr} → ${reservaFinStr}`);
+
+      // 🔥 REGLA DE NEGOCIO CORREGIDA:
+      // Conflicto SOLO si la reserva existente ocupa ALGUNA noche que nosotros queremos ocupar
+      // Las noches que nosotros ocupamos: desde nuevaInicioStr hasta nuevaFinStr-1
+      // Las noches que ocupa la reserva existente: desde reservaInicioStr hasta reservaFinStr-1
+      
+      // Generar array de noches ocupadas por la reserva existente
+      const nochesOcupadas = [];
+      const current = new Date(reservaInicio);
+      current.setUTCHours(0, 0, 0, 0);
+      const finReserva = new Date(reservaFin);
+      finReserva.setUTCHours(0, 0, 0, 0);
+      
+      while (current < finReserva) {
+        nochesOcupadas.push(current.toISOString().split('T')[0]);
+        current.setUTCDate(current.getUTCDate() + 1);
+      }
+      
+      console.log(`   Noches ocupadas por reserva existente:`, nochesOcupadas);
+      
+      // Generar array de noches que queremos ocupar
+      const nochesSolicitadas = [];
+      const currentSolicitada = new Date(fechaInicioDate);
+      currentSolicitada.setUTCHours(0, 0, 0, 0);
+      const finSolicitada = new Date(fechaFinDate);
+      finSolicitada.setUTCHours(0, 0, 0, 0);
+      
+      while (currentSolicitada < finSolicitada) {
+        nochesSolicitadas.push(currentSolicitada.toISOString().split('T')[0]);
+        currentSolicitada.setUTCDate(currentSolicitada.getUTCDate() + 1);
+      }
+      
+      console.log(`   Noches solicitadas:`, nochesSolicitadas);
+      
+      // Verificar si hay alguna noche en común
+      const conflicto = nochesSolicitadas.some(noche => nochesOcupadas.includes(noche));
+      
+      if (conflicto) {
+        console.log(`❌ CONFLICTO: La reserva existente ocupa noches que solicitamos`);
+        tieneConflicto = true;
+        reservaConflicto = reserva;
+        break;
+      } else {
+        console.log(`✅ Sin conflicto: No hay noches en común`);
+      }
+    }
+
+    if (tieneConflicto) {
+      console.log('❌ Conflicto con reserva existente:', reservaConflicto._id);
       
       return res.status(400).json({ 
         success: false,
         error: 'La cabaña ya está reservada en esas fechas',
         conflictoCon: {
-          reservaId: existeReserva._id,
+          reservaId: reservaConflicto._id,
           fechas: {
-            inicio: existeReserva.fechaInicio,
-            fin: existeReserva.fechaFin
+            inicio: reservaConflicto.fechaInicio,
+            fin: reservaConflicto.fechaFin
           }
         }
       });
     }
 
     // Crear fechas con horas para guardar en la BD
-    const fechaInicioBD = new Date(fechaInicio + 'T15:00:00.000Z'); // 12:00 PM ART
-    const fechaFinBD = new Date(fechaFin + 'T13:00:00.000Z');      // 10:00 AM ART
+    // Check-in: 15:00 UTC (12:00 ART)
+    // Check-out: 13:00 UTC (10:00 ART)
+    const fechaInicioBD = new Date(fechaInicio + 'T15:00:00.000Z');
+    const fechaFinBD = new Date(fechaFin + 'T13:00:00.000Z');
 
     // Calcular precio total
     const precioTotal = calcularPrecioTotal(fechaInicioDate, fechaFinDate);
