@@ -123,6 +123,15 @@ app.get('/', (req, res) => {
   });
 });
 
+// ✅ NUEVO ENDPOINT PARA PING (muy liviano)
+app.get('/api/ping', (req, res) => {
+  res.status(200).json({ 
+    success: true, 
+    message: 'pong',
+    timestamp: new Date().toISOString()
+  });
+});
+
 app.get('/health', (req, res) => {
   const dbStatus = mongoose.connection.readyState;
   const dbStatusText = {
