@@ -58,7 +58,7 @@ function obtenerTipoDia(fecha) {
   return 'semana'; // Lunes a Viernes = día de semana
 }
 
-// Calcular precio por NOCHE (no por día) - ACTUALIZADO
+// Calcular precio por NOCHE - NUEVAS TARIFAS
 function calcularPrecioPorNoche(fecha) {
   const tipo = obtenerTipoDia(fecha);
   const fechaArg = crearFechaArgentina(fecha);
@@ -66,27 +66,19 @@ function calcularPrecioPorNoche(fecha) {
   
   // Si es feriado, precio especial
   if (tipo === 'feriado') {
-    return 250000; // Feriados: $250.000
+    return 300000; // Feriados: $300.000
   }
   
-  // Evaluar por día de la semana específico
-  if (diaSemana === 5) { // 5 = Viernes
-    return 200000; // Viernes: $200.000
+  // Días de semana (Lunes a Viernes)
+  if (diaSemana >= 1 && diaSemana <= 5) { // 1=Lunes, 5=Viernes
+    return 150000; // Lunes a Viernes: $150.000
   }
   
-  if (diaSemana === 6) { // 6 = Sábado
-    return 220000; // Sábados: $220.000
-  }
-  
-  if (diaSemana === 0) { // 0 = Domingo
-    return 200000; // Domingo: $200.000
-  }
-  
-  // Lunes (1), Martes (2), Miércoles (3), Jueves (4)
-  return 180000; // Lunes a Jueves: $180.000
+  // Sábado y Domingo
+  return 210000; // Sábado o Domingo: $210.000
 }
 
-// Calcular precio total por NOCHEs (corregido)
+// Calcular precio total por NOCHEs
 function calcularPrecioTotal(fechaInicio, fechaFin) {
   const inicio = crearFechaArgentina(fechaInicio);
   const fin = crearFechaArgentina(fechaFin);
@@ -105,7 +97,7 @@ function calcularPrecioTotal(fechaInicio, fechaFin) {
   let precioTotal = 0;
   const fechaActual = new Date(inicio);
   
-  // Iterar por cada NOCHE (no por cada día)
+  // Iterar por cada NOCHE
   for (let i = 0; i < noches; i++) {
     precioTotal += calcularPrecioPorNoche(fechaActual);
     fechaActual.setDate(fechaActual.getDate() + 1);
@@ -114,7 +106,7 @@ function calcularPrecioTotal(fechaInicio, fechaFin) {
   return precioTotal;
 }
 
-// Obtener desglose de precios por NOCHEs (corregido)
+// Obtener desglose de precios por NOCHEs
 function obtenerDesglosePrecios(fechaInicio, fechaFin) {
   const inicio = crearFechaArgentina(fechaInicio);
   const fin = crearFechaArgentina(fechaFin);
@@ -140,13 +132,11 @@ function obtenerDesglosePrecios(fechaInicio, fechaFin) {
     const diaSemana = fechaActual.getDay();
     const tipo = obtenerTipoDia(fechaActual);
     
-    // Determinar categoría específica para mostrar
+    // Determinar categoría específica para mostrar (según nuevas tarifas)
     let categoria = tipo;
     if (tipo !== 'feriado') {
-      if (diaSemana >= 1 && diaSemana <= 4) { // Lunes a Jueves
-        categoria = 'Lunes a Jueves';
-      } else if (diaSemana === 5) { // Viernes
-        categoria = 'Viernes';
+      if (diaSemana >= 1 && diaSemana <= 5) { // Lunes a Viernes
+        categoria = 'Lunes a Viernes';
       } else if (diaSemana === 6) { // Sábado
         categoria = 'Sábado';
       } else if (diaSemana === 0) { // Domingo
@@ -176,11 +166,10 @@ function obtenerDesglosePrecios(fechaInicio, fechaFin) {
   };
 }
 
-// Función auxiliar para contar tipos de noches - ACTUALIZADA
+// Función auxiliar para contar tipos de noches - actualizada
 function contarNochesPorTipo(desglose) {
   const conteo = {
-    'Lunes a Jueves': 0,
-    'Viernes': 0,
+    'Lunes a Viernes': 0,
     'Sábado': 0,
     'Domingo': 0,
     'Feriado': 0
@@ -191,11 +180,8 @@ function contarNochesPorTipo(desglose) {
       conteo['Feriado']++;
     } else {
       switch (item.diaSemana) {
-        case 1: case 2: case 3: case 4: // Lunes a Jueves
-          conteo['Lunes a Jueves']++;
-          break;
-        case 5: // Viernes
-          conteo['Viernes']++;
+        case 1: case 2: case 3: case 4: case 5: // Lunes a Viernes
+          conteo['Lunes a Viernes']++;
           break;
         case 6: // Sábado
           conteo['Sábado']++;
@@ -210,7 +196,7 @@ function contarNochesPorTipo(desglose) {
   return conteo;
 }
 
-// Función para generar resumen (opcional) - ACTUALIZADA
+// Función para generar resumen - actualizada
 function generarResumenPrecio(fechaInicio, fechaFin) {
   const { desglose, precioTotal, totalNoches, checkIn, checkOut } = obtenerDesglosePrecios(fechaInicio, fechaFin);
   const conteo = contarNochesPorTipo(desglose);
@@ -231,11 +217,10 @@ function generarResumenPrecio(fechaInicio, fechaFin) {
     checkIn: checkIn,
     checkOut: checkOut,
     tarifas: {
-      'Lunes a Jueves': 180000,
-      'Viernes': 200000,
-      'Sábado': 220000,
-      'Domingo': 200000,
-      'Feriado': 250000
+      'Lunes a Viernes': 150000,
+      'Sábado': 210000,
+      'Domingo': 210000,
+      'Feriado': 300000
     }
   };
 }
